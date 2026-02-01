@@ -16,6 +16,18 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - ⚙️ **Port Management**: Automatic or manual port allocation
 - 📊 **Status Monitoring**: Real-time application status tracking
 
+## 📚 Documentation
+
+**New to Microverse?** Start here:
+- 📖 [Installation & Usage Guide](README.md) - You're here! Learn how to install and use Microverse
+- 🚀 [Quick Start Guide](#quick-start) - Get up and running in 5 minutes
+
+**For Developers:**
+- 🏗️ [Architecture & Development Guide](CLAUDE.md) - Understand the codebase architecture
+- 📋 [Development Progress](PROGRESS.md) - Current status and roadmap
+- 🔄 [Daily Workflow Guide](WORKFLOW.md) - How to start/end your workday
+- 📚 [Documentation Index](DOCS.md) - Complete documentation overview
+
 ## Quick Start
 
 ### Prerequisites
