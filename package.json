@@ -1,0 +1,32 @@
+{
+  "name": "microverse",
+  "version": "1.0.0",
+  "description": "Microverse - 跨平台应用部署管理系统",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm install --workspace=server && npm install --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build:client": "npm run build --workspace=client",
+    "start:server": "npm run start --workspace=server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "deployment",
+    "microverse",
+    "cross-platform"
+  ],
+  "author": "",
+  "license": "MIT"
+}

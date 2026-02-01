@@ -1,0 +1,33 @@
+{
+  "name": "microverse-server",
+  "version": "1.0.0",
+  "description": "Microverse backend server",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "cross-env NODE_ENV=development node src/app.js",
+    "start": "cross-env NODE_ENV=production node src/app.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop microverse-server",
+    "pm2:restart": "pm2 restart microverse-server",
+    "pm2:logs": "pm2 logs microverse-server"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "sqlite3": "^5.1.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "multer": "^1.4.5-lts.1",
+    "cross-env": "^7.0.3",
+    "pm2": "^5.3.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "server",
+    "api"
+  ],
+  "author": "",
+  "license": "MIT"
+}
