@@ -100,4 +100,12 @@ export const uploadFiles = async (id, files) => {
   return response.data.data
 }
 
+/**
+ * Get application files/directory listing
+ */
+export const getAppFiles = async (id) => {
+  const response = await api.get(`/apps/${id}/files`)
+  return response.data.data
+}
+
 export default api

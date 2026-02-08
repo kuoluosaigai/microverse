@@ -210,6 +210,26 @@ router.post('/apps/:id/sync', async (req, res, next) => {
   }
 });
 
+// Get application files/directory listing
+router.get('/apps/:id/files', async (req, res, next) => {
+  try {
+    const files = await AppManager.getAppFiles(req.params.id);
+
+    res.json({
+      success: true,
+      data: files
+    });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    next(error);
+  }
+});
+
 // File upload route
 router.post('/apps/:id/upload', async (req, res, next) => {
   try {

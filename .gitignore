@@ -49,3 +49,6 @@ apps/*/
 tmp/
 temp/
 *.tmp
+
+# Demo applications for testing
+demo/

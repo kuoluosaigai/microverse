@@ -67,8 +67,13 @@
     "start": "启动",
     "stop": "停止",
     "delete": "删除",
+    "more": "更多",
+    "viewDirectory": "查看部署目录",
     "deleteTitle": "删除应用",
     "deleteConfirm": "确定要删除此应用吗？",
+    "directoryTitle": "部署目录",
+    "directoryEmpty": "目录为空",
+    "loadDirectoryError": "加载目录失败",
     "status": {
       "running": "运行中",
       "stopped": "已停止"
@@ -77,6 +82,10 @@
       "http-server": "静态网站",
       "npm": "Node.js",
       "nginx": "Nginx"
+    },
+    "fileTypes": {
+      "file": "文件",
+      "directory": "目录"
     }
   },
   "messages": {
