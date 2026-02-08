@@ -12,6 +12,7 @@ import {
   message
 } from 'antd'
 import { ArrowLeftOutlined } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import { createApp } from '../api/apps'
 
 const { Header, Content } = Layout
@@ -20,6 +21,7 @@ const { Option } = Select
 
 function CreateApp() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
 
@@ -27,10 +29,10 @@ function CreateApp() {
     try {
       setLoading(true)
       await createApp(values.name, values.deploy_type)
-      message.success('Application created successfully')
+      message.success(t('createApp.successMessage'))
       navigate('/')
     } catch (error) {
-      message.error(error.response?.data?.error?.message || 'Failed to create application')
+      message.error(error.response?.data?.error?.message || t('createApp.errorMessage'))
     } finally {
       setLoading(false)
     }
@@ -46,10 +48,10 @@ function CreateApp() {
             onClick={() => navigate('/')}
             style={{ marginRight: 16 }}
           >
-            Back
+            {t('common.back')}
           </Button>
           <Title level={3} style={{ margin: 0 }}>
-            Create Application
+            {t('createApp.title')}
           </Title>
         </div>
       </Header>
@@ -64,39 +66,39 @@ function CreateApp() {
               initialValues={{ deploy_type: 'http-server' }}
             >
               <Form.Item
-                label="Application Name"
+                label={t('createApp.appName')}
                 name="name"
                 rules={[
-                  { required: true, message: 'Please enter an application name' },
-                  { pattern: /^[a-zA-Z0-9-_]+$/, message: 'Only alphanumeric, dash, and underscore allowed' }
+                  { required: true, message: t('createApp.appNameRequired') },
+                  { pattern: /^[a-zA-Z0-9-_]+$/, message: t('createApp.appNamePattern') }
                 ]}
               >
                 <Input
-                  placeholder="my-app"
+                  placeholder={t('createApp.appNamePlaceholder')}
                   size="large"
                 />
               </Form.Item>
 
               <Form.Item
-                label="Deployment Type"
+                label={t('createApp.deployType')}
                 name="deploy_type"
-                rules={[{ required: true, message: 'Please select a deployment type' }]}
+                rules={[{ required: true, message: t('createApp.deployTypeRequired') }]}
               >
                 <Select size="large">
                   <Option value="http-server">
-                    Static Site (http-server)
+                    {t('createApp.staticSite')}
                   </Option>
                   <Option value="npm">
-                    Node.js Application (npm)
+                    {t('createApp.nodeApp')}
                   </Option>
                   <Option value="nginx" disabled>
-                    Nginx (Coming Soon)
+                    {t('createApp.nginx')}
                   </Option>
                 </Select>
               </Form.Item>
 
               <Paragraph type="secondary" style={{ marginBottom: 24 }}>
-                After creating the app, you'll need to upload your files before deploying.
+                {t('createApp.helpText')}
               </Paragraph>
 
               <Form.Item>
@@ -107,13 +109,13 @@ function CreateApp() {
                     size="large"
                     loading={loading}
                   >
-                    Create Application
+                    {t('createApp.createButton')}
                   </Button>
                   <Button
                     size="large"
                     onClick={() => navigate('/')}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                 </Space>
               </Form.Item>

@@ -1,14 +1,19 @@
 import { Card, Tag, Button, Space, Typography, Popconfirm } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import {
   PlayCircleOutlined,
   StopOutlined,
   DeleteOutlined,
-  FolderOutlined
+  FolderOutlined,
+  CloudUploadOutlined
 } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 
-const { Text, Paragraph } = Typography
+const { Text } = Typography
 
 function AppCard({ app, onStart, onStop, onDelete }) {
+  const navigate = useNavigate()
+  const { t } = useTranslation()
   const isRunning = app.status === 'running'
 
   const getStatusColor = (status) => {
@@ -16,12 +21,7 @@ function AppCard({ app, onStart, onStop, onDelete }) {
   }
 
   const getDeployTypeLabel = (type) => {
-    const labels = {
-      'http-server': 'Static Site',
-      'npm': 'Node.js',
-      'nginx': 'Nginx'
-    }
-    return labels[type] || type
+    return t(`appCard.deployTypes.${type}`) || type
   }
 
   return (
@@ -31,7 +31,7 @@ function AppCard({ app, onStart, onStop, onDelete }) {
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
           <Text strong>{app.name}</Text>
           <Tag color={getStatusColor(app.status)}>
-            {app.status}
+            {t(`appCard.status.${app.status}`)}
           </Tag>
         </Space>
       }
@@ -42,31 +42,39 @@ function AppCard({ app, onStart, onStop, onDelete }) {
     >
       <Space direction="vertical" style={{ width: '100%' }}>
         <div>
-          <Text type="secondary">Type: </Text>
+          <Text type="secondary">{t('appCard.type')}: </Text>
           <Text>{getDeployTypeLabel(app.deploy_type)}</Text>
         </div>
 
         {app.port && (
           <div>
-            <Text type="secondary">Port: </Text>
+            <Text type="secondary">{t('appCard.port')}: </Text>
             <Text code>{app.port}</Text>
           </div>
         )}
 
         <div>
-          <Text type="secondary">Created: </Text>
+          <Text type="secondary">{t('appCard.created')}: </Text>
           <Text>{new Date(app.created_at).toLocaleDateString()}</Text>
         </div>
 
         <div style={{ marginTop: 16 }}>
-          <Space>
+          <Space wrap>
+            <Button
+              size="small"
+              icon={<CloudUploadOutlined />}
+              onClick={() => navigate(`/apps/${app.id}/upload`)}
+            >
+              {t('appCard.upload')}
+            </Button>
+
             {isRunning ? (
               <Button
                 size="small"
                 icon={<StopOutlined />}
                 onClick={() => onStop(app.id)}
               >
-                Stop
+                {t('appCard.stop')}
               </Button>
             ) : (
               <Button
@@ -75,16 +83,16 @@ function AppCard({ app, onStart, onStop, onDelete }) {
                 icon={<PlayCircleOutlined />}
                 onClick={() => onStart(app.id)}
               >
-                Start
+                {t('appCard.start')}
               </Button>
             )}
 
             <Popconfirm
-              title="Delete application"
-              description="Are you sure you want to delete this app?"
+              title={t('appCard.deleteTitle')}
+              description={t('appCard.deleteConfirm')}
               onConfirm={() => onDelete(app.id)}
-              okText="Yes"
-              cancelText="No"
+              okText={t('common.yes')}
+              cancelText={t('common.no')}
               disabled={isRunning}
             >
               <Button
@@ -93,7 +101,7 @@ function AppCard({ app, onStart, onStop, onDelete }) {
                 icon={<DeleteOutlined />}
                 disabled={isRunning}
               >
-                Delete
+                {t('appCard.delete')}
               </Button>
             </Popconfirm>
           </Space>

@@ -1,0 +1,91 @@
+{
+  "common": {
+    "appName": "Microverse",
+    "back": "Back",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "create": "Create",
+    "delete": "Delete",
+    "upload": "Upload",
+    "start": "Start",
+    "stop": "Stop",
+    "yes": "Yes",
+    "no": "No",
+    "loading": "Loading...",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning"
+  },
+  "dashboard": {
+    "title": "Applications Dashboard",
+    "createApp": "Create Application",
+    "noApps": "No Applications",
+    "noAppsDesc": "Click the button above to create your first application",
+    "refreshApps": "Refresh Applications"
+  },
+  "createApp": {
+    "title": "Create Application",
+    "appName": "Application Name",
+    "appNamePlaceholder": "my-app",
+    "appNameRequired": "Please enter an application name",
+    "appNamePattern": "Only alphanumeric, dash, and underscore allowed",
+    "deployType": "Deployment Type",
+    "deployTypeRequired": "Please select a deployment type",
+    "staticSite": "Static Site (http-server)",
+    "nodeApp": "Node.js Application (npm)",
+    "nginx": "Nginx (Coming Soon)",
+    "helpText": "After creating the app, you'll need to upload your files before deploying.",
+    "createButton": "Create Application",
+    "successMessage": "Application created successfully",
+    "errorMessage": "Failed to create application"
+  },
+  "uploadFiles": {
+    "title": "Upload Files",
+    "uploadTitle": "Upload Files",
+    "uploadDescription": "Upload files for your application. You can upload individual files or a ZIP archive that will be automatically extracted.",
+    "allowedTypes": "Allowed file types",
+    "allowedTypesValue": "HTML, CSS, JS, JSON, TXT, MD, Images (JPG, PNG, GIF, SVG, ICO), ZIP",
+    "maxSize": "Maximum size",
+    "maxSizeValue": "50MB per upload",
+    "dragHint": "Click or drag files to this area to upload",
+    "dragDescription": "Support for single or multiple file upload. ZIP files will be automatically extracted.",
+    "selectedFiles": "Selected Files",
+    "uploadButton": "Upload Files",
+    "uploading": "Uploading...",
+    "noFilesSelected": "Please select files to upload",
+    "uploadSuccess": "Successfully uploaded {{count}} file(s)",
+    "uploadError": "Upload failed",
+    "loadAppError": "Failed to load application",
+    "quickTipTitle": "Quick Tip",
+    "quickTipStatic": "For static sites, make sure you have an index.html file in your upload. You can upload it individually or include it in a ZIP file."
+  },
+  "appCard": {
+    "type": "Type",
+    "port": "Port",
+    "created": "Created",
+    "upload": "Upload",
+    "start": "Start",
+    "stop": "Stop",
+    "delete": "Delete",
+    "deleteTitle": "Delete application",
+    "deleteConfirm": "Are you sure you want to delete this app?",
+    "status": {
+      "running": "running",
+      "stopped": "stopped"
+    },
+    "deployTypes": {
+      "http-server": "Static Site",
+      "npm": "Node.js",
+      "nginx": "Nginx"
+    }
+  },
+  "messages": {
+    "appCreated": "Application created successfully",
+    "appDeleted": "Application deleted successfully",
+    "appStarted": "Application started successfully",
+    "appStopped": "Application stopped successfully",
+    "filesUploaded": "Files uploaded successfully",
+    "operationFailed": "Operation failed",
+    "confirmDelete": "This action cannot be undone"
+  }
+}

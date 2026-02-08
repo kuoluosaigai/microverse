@@ -1,0 +1,91 @@
+{
+  "common": {
+    "appName": "Microverse",
+    "back": "返回",
+    "cancel": "取消",
+    "confirm": "确认",
+    "create": "创建",
+    "delete": "删除",
+    "upload": "上传",
+    "start": "启动",
+    "stop": "停止",
+    "yes": "是",
+    "no": "否",
+    "loading": "加载中...",
+    "success": "成功",
+    "error": "错误",
+    "warning": "警告"
+  },
+  "dashboard": {
+    "title": "应用仪表板",
+    "createApp": "创建应用",
+    "noApps": "暂无应用",
+    "noAppsDesc": "点击上方按钮创建您的第一个应用",
+    "refreshApps": "刷新应用列表"
+  },
+  "createApp": {
+    "title": "创建应用",
+    "appName": "应用名称",
+    "appNamePlaceholder": "my-app",
+    "appNameRequired": "请输入应用名称",
+    "appNamePattern": "只允许字母、数字、横线和下划线",
+    "deployType": "部署类型",
+    "deployTypeRequired": "请选择部署类型",
+    "staticSite": "静态网站 (http-server)",
+    "nodeApp": "Node.js 应用 (npm)",
+    "nginx": "Nginx (即将推出)",
+    "helpText": "创建应用后，您需要先上传文件才能部署。",
+    "createButton": "创建应用",
+    "successMessage": "应用创建成功",
+    "errorMessage": "创建应用失败"
+  },
+  "uploadFiles": {
+    "title": "上传文件",
+    "uploadTitle": "上传文件",
+    "uploadDescription": "为您的应用上传文件。您可以上传单个文件或 ZIP 压缩包，压缩包将自动解压。",
+    "allowedTypes": "允许的文件类型",
+    "allowedTypesValue": "HTML, CSS, JS, JSON, TXT, MD, 图片 (JPG, PNG, GIF, SVG, ICO), ZIP",
+    "maxSize": "最大大小",
+    "maxSizeValue": "每次上传 50MB",
+    "dragHint": "点击或拖拽文件到此区域上传",
+    "dragDescription": "支持单个或多个文件上传。ZIP 文件将自动解压。",
+    "selectedFiles": "已选择文件",
+    "uploadButton": "上传文件",
+    "uploading": "上传中...",
+    "noFilesSelected": "请选择要上传的文件",
+    "uploadSuccess": "成功上传 {{count}} 个文件",
+    "uploadError": "上传失败",
+    "loadAppError": "加载应用失败",
+    "quickTipTitle": "快速提示",
+    "quickTipStatic": "对于静态网站，请确保上传中包含 index.html 文件。您可以单独上传或包含在 ZIP 文件中。"
+  },
+  "appCard": {
+    "type": "类型",
+    "port": "端口",
+    "created": "创建时间",
+    "upload": "上传",
+    "start": "启动",
+    "stop": "停止",
+    "delete": "删除",
+    "deleteTitle": "删除应用",
+    "deleteConfirm": "确定要删除此应用吗？",
+    "status": {
+      "running": "运行中",
+      "stopped": "已停止"
+    },
+    "deployTypes": {
+      "http-server": "静态网站",
+      "npm": "Node.js",
+      "nginx": "Nginx"
+    }
+  },
+  "messages": {
+    "appCreated": "应用创建成功",
+    "appDeleted": "应用删除成功",
+    "appStarted": "应用启动成功",
+    "appStopped": "应用停止成功",
+    "filesUploaded": "文件上传成功",
+    "operationFailed": "操作失败",
+    "confirmDelete": "此操作不可撤销"
+  }
+}
