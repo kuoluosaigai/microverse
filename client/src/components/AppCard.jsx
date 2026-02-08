@@ -1,4 +1,4 @@
-import { Card, Tag, Button, Space, Typography, Popconfirm, Dropdown, Modal, List, message } from 'antd'
+import { Card, Tag, Button, Space, Typography, Popconfirm, Dropdown, Modal, List, message, Tooltip } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -9,7 +9,8 @@ import {
   CloudUploadOutlined,
   MoreOutlined,
   FileOutlined,
-  FolderFilled
+  FolderFilled,
+  LinkOutlined
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles } from '../api/apps'
@@ -55,6 +56,13 @@ function AppCard({ app, onStart, onStop, onDelete }) {
     }
   ]
 
+  const handlePortClick = () => {
+    if (app.port && isRunning) {
+      const url = `http://localhost:${app.port}`
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   return (
     <>
       <Card
@@ -81,7 +89,31 @@ function AppCard({ app, onStart, onStop, onDelete }) {
         {app.port && (
           <div>
             <Text type="secondary">{t('appCard.port')}: </Text>
-            <Text code>{app.port}</Text>
+            {isRunning ? (
+              <Tooltip title={t('appCard.clickToOpen')}>
+                <Text
+                  code
+                  style={{
+                    cursor: 'pointer',
+                    color: '#1890ff',
+                    transition: 'all 0.3s'
+                  }}
+                  onClick={handlePortClick}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.textDecoration = 'underline'
+                    e.currentTarget.style.color = '#40a9ff'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.textDecoration = 'none'
+                    e.currentTarget.style.color = '#1890ff'
+                  }}
+                >
+                  {app.port} <LinkOutlined style={{ fontSize: 12 }} />
+                </Text>
+              </Tooltip>
+            ) : (
+              <Text code>{app.port}</Text>
+            )}
           </div>
         )}
 

@@ -69,6 +69,7 @@
     "delete": "Delete",
     "more": "More",
     "viewDirectory": "View Deployment Directory",
+    "clickToOpen": "Click to open app",
     "deleteTitle": "Delete application",
     "deleteConfirm": "Are you sure you want to delete this app?",
     "directoryTitle": "Deployment Directory",
