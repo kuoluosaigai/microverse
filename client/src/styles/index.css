@@ -95,7 +95,7 @@ body {
 
 /* Message: paper */
 .ant-message-notice-content { background: var(--ink) !important; color: var(--paper) !important;
-  border-radius: 0 !important; font-family: var(--mono); letter-spacing: 0.04em; }
+  border-radius: 0 !important; font-family: var(--mono) !important; letter-spacing: 0.04em; }
 .ant-message-notice-content .anticon { color: var(--paper) !important; }
 
 /* Dragger: dashed paper frame (base; .dropzone adds layout) */

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Modal, Spin, Popconfirm } from 'antd'
+import { Modal, Spin, Popconfirm, message } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles } from '../api/apps'
@@ -20,7 +20,8 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
     try {
       setFiles(await getAppFiles(app.id))
     } catch {
-      setFiles([])
+      message.error(t('appCard.loadDirectoryError'))
+      setDirOpen(false)
     } finally {
       setLoadingDir(false)
     }
@@ -118,7 +119,7 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
         ) : (
           <ul className="file-list">
             {files.map((f, i) => (
-              <li className="file-row" key={f.name}>
+              <li className="file-row" key={`${f.type}-${f.name}`}>
                 <div className="num">{String(i + 1).padStart(2, '0')}</div>
                 <div className="ext">
                   {f.type === 'directory' ? 'DIR' : (f.name.split('.').pop() || 'FILE').toUpperCase()}
