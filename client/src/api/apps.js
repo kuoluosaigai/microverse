@@ -108,4 +108,12 @@ export const getAppFiles = async (id) => {
   return response.data.data
 }
 
+/**
+ * Get public client configuration (upload limits, etc.)
+ */
+export const getConfig = async () => {
+  const response = await api.get('/config')
+  return response.data.data
+}
+
 export default api

@@ -24,6 +24,19 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Public client configuration (upload limits, etc.)
+router.get('/config', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      upload: {
+        maxFileSize: config.deployment.maxFileSize,
+        maxFiles: config.deployment.maxFiles
+      }
+    }
+  });
+});
+
 // Get all applications
 router.get('/apps', async (req, res, next) => {
   try {

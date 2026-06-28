@@ -169,6 +169,7 @@ All endpoints return `{ success, data }` or `{ success: false, error: { message 
 
 ### System
 - `GET /api/health` - Health check
+- `GET /api/config` - Public client configuration (upload limits)
 - `GET /` - Server information
 
 ## Configuration
@@ -199,7 +200,7 @@ MAX_FILES=100
 PM2_INSTANCE_NAME=microverse-server
 ```
 
-> Note: the upload middleware currently enforces a 50MB per-file limit and an allow-list of extensions; the `MAX_FILE_SIZE` env is read by config but not yet wired into the middleware.
+> The per-file size limit is configured via `MAX_FILE_SIZE` (default 100MB), enforced by the upload middleware, and surfaced to the UI via `GET /api/config`.
 
 ## Cross-Platform Compatibility
 

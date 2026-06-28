@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Upload, Button, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
-import { uploadFiles, getAppById } from '../api/apps'
+import { uploadFiles, getAppById, getConfig } from '../api/apps'
 
 const { Dragger } = Upload
 
@@ -14,6 +14,7 @@ function UploadFiles() {
   const [fileList, setFileList] = useState([])
   const [uploading, setUploading] = useState(false)
   const [app, setApp] = useState(null)
+  const [sizeMb, setSizeMb] = useState(100) // fallback before /config resolves
 
   useEffect(() => {
     const loadApp = async () => {
@@ -26,6 +27,16 @@ function UploadFiles() {
     }
     loadApp()
   }, [id, navigate, t])
+
+  useEffect(() => {
+    getConfig()
+      .then((d) => {
+        if (d?.upload?.maxFileSize) {
+          setSizeMb(Math.floor(d.upload.maxFileSize / (1024 * 1024)))
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const handleUpload = async () => {
     if (fileList.length === 0) {
@@ -78,6 +89,7 @@ function UploadFiles() {
         <Dragger {...uploadProps} className="dropzone">
           <div className="dz-text">{t('uploadFiles.dragHint')}</div>
           <div className="dz-hint">{t('uploadFiles.dragDescription')}</div>
+          <div className="dz-hint">{t('uploadFiles.maxSizeValue', { size: sizeMb })}</div>
         </Dragger>
 
         {fileList.length > 0 && (
