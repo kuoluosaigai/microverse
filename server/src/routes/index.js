@@ -277,10 +277,21 @@ router.post('/apps/:id/upload', async (req, res, next) => {
         if (path.extname(file.filename).toLowerCase() === '.zip') {
           try {
             const zip = new AdmZip(filePath);
+
+            // Guard against path traversal (zip-slip): every entry must
+            // resolve inside the app directory before we extract.
+            const safeRoot = path.resolve(app.path);
+            const entries = zip.getEntries();
+            for (const entry of entries) {
+              const entryTarget = path.resolve(app.path, entry.entryName);
+              if (entryTarget !== safeRoot && !entryTarget.startsWith(safeRoot + path.sep)) {
+                throw new Error(`Unsafe zip entry path: ${entry.entryName}`);
+              }
+            }
+
             zip.extractAllTo(app.path, true);
 
             // Get list of extracted files
-            const entries = zip.getEntries();
             const extractedFiles = entries.map(entry => entry.entryName);
             uploadedFiles.push(...extractedFiles);
 

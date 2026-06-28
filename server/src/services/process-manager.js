@@ -2,6 +2,7 @@ const { exec } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const execPromise = util.promisify(exec);
 
@@ -12,32 +13,51 @@ const execPromise = util.promisify(exec);
 
 class ProcessManager {
   /**
-   * Get http-server executable path (cross-platform)
+   * Resolve a CLI module's JS entry file across local/global node_modules.
+   * Returns an absolute path when found, or null so the caller can fall back
+   * to a bare command (works on Linux/macOS, but NOT in PM2 fork mode on Windows).
    */
-  static getHttpServerPath() {
-    // Try to find http-server in node_modules
-    const globalNodeModules = path.join(
-      process.env.APPDATA || process.env.HOME,
-      'npm/node_modules/http-server/bin/http-server'
-    );
+  static resolveCliModule(relativePath) {
+    // 1. Local (project) node_modules
+    const localPath = path.join(process.cwd(), 'node_modules', relativePath);
+    if (fs.existsSync(localPath)) {
+      return localPath;
+    }
 
-    // For Windows, we need to use the JS file directly, not the CMD wrapper
-    if (process.platform === 'win32') {
-      // Check global installation
-      const globalPath = 'C:\\Users\\User\\AppData\\Roaming\\npm\\node_modules\\http-server\\bin\\http-server';
-      if (fs.existsSync(globalPath)) {
-        return globalPath;
-      }
+    // 2. Global node_modules at the platform-specific install root
+    const globalRoot = process.platform === 'win32'
+      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules')
+      : path.join(os.homedir(), '.npm-global', 'node_modules');
+    const globalPath = path.join(globalRoot, relativePath);
+    if (fs.existsSync(globalPath)) {
+      return globalPath;
+    }
 
-      // Check local installation
-      const localPath = path.join(process.cwd(), 'node_modules/http-server/bin/http-server');
-      if (fs.existsSync(localPath)) {
-        return localPath;
+    // 3. Unix fallback: /usr/local global root (common default)
+    if (process.platform !== 'win32') {
+      const unixGlobal = path.join('/usr', 'local', 'lib', 'node_modules', relativePath);
+      if (fs.existsSync(unixGlobal)) {
+        return unixGlobal;
       }
     }
 
-    // For Linux/Mac, can use http-server directly
-    return 'http-server';
+    return null;
+  }
+
+  /**
+   * Get http-server executable path (cross-platform)
+   * Uses the JS entry directly (not the .cmd wrapper) so PM2 fork mode works on Windows.
+   */
+  static getHttpServerPath() {
+    return this.resolveCliModule('http-server/bin/http-server') || 'http-server';
+  }
+
+  /**
+   * Get npm CLI JS entry path (cross-platform)
+   * Avoids the .cmd wrapper problem on Windows, same approach as http-server.
+   */
+  static getNpmCliPath() {
+    return this.resolveCliModule('npm/bin/npm-cli.js') || 'npm';
   }
 
   /**
@@ -47,16 +67,21 @@ class ProcessManager {
     const { name, path: appPath, deploy_type, port } = app;
 
     switch (deploy_type) {
-      case 'npm':
-        // Start npm application
+      case 'npm': {
+        // Start npm application. On Windows, `npm` is a .cmd wrapper that PM2
+        // fork mode can't launch, so resolve the JS entry and run it with node
+        // (same approach as http-server).
+        const npmCliPath = this.getNpmCliPath();
+        const resolvedJs = npmCliPath !== 'npm';
+
         try {
           const ecosystemConfig = {
             apps: [{
               name: name,
-              script: 'npm',
+              script: npmCliPath,
               args: 'start',
               cwd: appPath,
-              interpreter: 'none',
+              interpreter: resolvedJs ? 'node' : 'none',
               exec_mode: 'fork',
               autorestart: true
             }]
@@ -81,6 +106,7 @@ class ProcessManager {
         } catch (error) {
           throw new Error(`Failed to start process: ${error.message}`);
         }
+      }
 
       case 'http-server':
         // Start http-server

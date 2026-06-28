@@ -1,5 +1,6 @@
 const { queries } = require('../db');
 const pathHelper = require('../utils/path-helper');
+const ProcessManager = require('./process-manager');
 const fs = require('fs');
 const path = require('path');
 
@@ -99,6 +100,15 @@ class AppManager {
     // Check if app is running
     if (app.status === 'running') {
       throw new Error('Cannot delete running app. Stop it first.');
+    }
+
+    // Remove any leftover PM2 entry. `stop` leaves the process in the PM2
+    // list, so without this we'd orphan it. Non-fatal: DB deletion proceeds
+    // even if PM2 has nothing to remove.
+    try {
+      await ProcessManager.deleteProcess(app.name);
+    } catch (err) {
+      console.warn(`Could not remove PM2 process for '${app.name}': ${err.message}`);
     }
 
     // Delete from database
