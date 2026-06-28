@@ -1,25 +1,27 @@
-# 🌍 Microverse
+# <img src="client/public/favicon.svg" width="28" height="28" alt="Microverse" align="top"> Microverse
 
 > Deploy and manage your micro applications with ease
 
-A web-based platform for deploying and managing micro applications. Create, upload, and deploy multiple small web applications with different runtime environments (npm, http-server, nginx) through a simple web interface.
+A web-based platform for deploying and managing micro applications. Create, upload, and deploy multiple small web applications with different runtime environments (npm, http-server, nginx) through a single web interface — so the long tail of one-off static sites and tiny Node services has one home instead of a dozen half-forgotten ports.
 
 ## Features
 
 - 📁 **Application Management**: Create and organize applications in dedicated directories
-- 📤 **Easy Upload**: Upload web applications via web interface (supports zip files and direct upload)
+- 📤 **Drag-and-drop Upload**: Upload individual files or a ZIP archive (auto-extracted on upload)
 - 🚀 **Multiple Deploy Options**:
-  - npm start (for Node.js applications)
-  - http-server (for static files)
-  - nginx (for advanced configurations)
-- 🔗 **Route Management**: View and access all deployed applications from a central dashboard
-- ⚙️ **Port Management**: Automatic or manual port allocation
-- 📊 **Status Monitoring**: Real-time application status tracking
+  - `http-server` — for static sites (requires `index.html`)
+  - `npm` — for Node.js applications (requires `package.json` with a `start` script)
+  - `nginx` — placeholder (not yet implemented)
+- 🔗 **Central Dashboard**: View and access every deployed application from one place
+- ⚙️ **Port Management**: Automatic port allocation in a configurable range (3000–9000 by default)
+- 📊 **Status Sync**: `Live` / `Idle` status, reconciled with actual PM2 process state
+- 🌐 **Bilingual UI**: Chinese / English toggle, persisted per browser
+- 🎨 **Editorial Interface**: warm-paper, serif/mono, single accent — a deliberate, non-template look (see [design spec](docs/superpowers/specs/2026-06-28-editorial-ui-redesign-design.md))
 
 ## 📚 Documentation
 
 **New to Microverse?** Start here:
-- 📖 [Installation & Usage Guide](README.md) - You're here! Learn how to install and use Microverse
+- 📖 [Installation & Usage Guide](README.md) - You're here
 - 🚀 [Quick Start Guide](#quick-start) - Get up and running in 5 minutes
 
 **For Developers:**
@@ -27,6 +29,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - 📋 [Development Progress](PROGRESS.md) - Current status and roadmap
 - 🔄 [Daily Workflow Guide](WORKFLOW.md) - How to start/end your workday
 - 📚 [Documentation Index](DOCS.md) - Complete documentation overview
+- 🎨 [UI Design Spec](docs/superpowers/specs/2026-06-28-editorial-ui-redesign-design.md) - Editorial redesign
 
 ## Quick Start
 
@@ -34,6 +37,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 
 - Node.js >= 18.0.0
 - npm >= 9.0.0
+- [PM2](https://pm2.keymetrics.io/) installed globally (`npm install -g pm2`) and, for `http-server` static deploys, `http-server` globally (`npm install -g http-server`)
 
 ### Installation
 
@@ -88,27 +92,35 @@ npm run pm2:logs
 
 ### Creating an Application
 
-1. Click "Create App" button on the dashboard
+1. Click **+ New app** in the top nav
 2. Enter a unique application name (alphanumeric, dash, and underscore only)
-3. Select deployment type:
+3. Select a deployment type:
    - **Static Site (http-server)**: For HTML/CSS/JS static websites
-   - **Node.js (npm)**: For Node.js applications with package.json
+   - **Node.js (npm)**: For Node.js applications with a `package.json` `start` script
    - **Nginx**: Coming soon
-4. Click "Create Application"
+4. Submit — the app appears on the dashboard as `Idle`
 
-### Deploying an Application
+### Uploading Files
 
-1. After creating an app, upload your files (feature to be implemented)
-2. Click "Start" button on the app card
-3. The application will be assigned a port automatically
-4. Access your application at `http://localhost:<port>`
+1. On an app's row, click **Upload**
+2. Drag files onto the drop zone (or click to pick), including a `.zip` — archives are extracted automatically on upload
+3. Allowed types: HTML, CSS, JS, JSON, TXT, MD, images (JPG/PNG/GIF/SVG/ICO), ZIP
+4. Click **Upload Files** — you return to the dashboard
+
+### Deploying & Accessing
+
+1. Click **Start** on the app row — a port is assigned automatically
+2. The status flips to **Live** and the port becomes a clickable chip
+3. Click the port chip to open the deployed app at `http://localhost:<port>`
+4. Use **Stop** to take it back to **Idle**
 
 ### Managing Applications
 
-- **Start**: Start a stopped application
-- **Stop**: Stop a running application
-- **Delete**: Remove an application (must be stopped first)
-- **Refresh**: Update the status of all applications
+- **Start / Stop**: Toggle an app's process via PM2
+- **View Directory**: Inspect the deployed files in a modal
+- **Upload**: Add or replace files
+- **Delete**: Remove an app (must be stopped first; its PM2 entry is cleaned up)
+- **Refresh**: Re-fetch the app list; status is reconciled with PM2 on each request via the sync endpoint
 
 ## Project Structure
 
@@ -118,69 +130,86 @@ microverse/
 │   ├── src/
 │   │   ├── app.js         # Express application entry point
 │   │   ├── config/        # Configuration management
-│   │   ├── db/            # Database (SQLite)
+│   │   ├── db/            # Database (SQLite via sqlite3)
 │   │   ├── routes/        # API routes
-│   │   ├── services/      # Business logic
-│   │   ├── middleware/    # Express middleware
-│   │   └── utils/         # Utility functions
+│   │   ├── services/      # Business logic (AppManager / ProcessManager / DeployManager)
+│   │   ├── middleware/    # Express middleware (errors, upload)
+│   │   └── utils/         # Utility functions (path-helper)
 │   └── package.json
 ├── client/                # Frontend application
+│   ├── public/
+│   │   └── favicon.svg    # Editorial grid mark
 │   ├── src/
-│   │   ├── pages/         # React pages
-│   │   ├── components/    # React components
+│   │   ├── pages/         # React pages (Dashboard, CreateApp, UploadFiles)
+│   │   ├── components/    # EditorialShell, AppRow, LanguageSwitcher
 │   │   ├── api/           # API client
-│   │   └── styles/        # CSS styles
+│   │   ├── i18n/          # zh / en locales
+│   │   └── styles/        # index.css (palette + antd neutralization) + editorial.css
 │   └── package.json
-├── apps/                  # Deployed applications directory
-├── data/                  # Database files
+├── apps/                  # Deployed applications directory (runtime data)
+├── data/                  # Database files (runtime data)
 └── package.json           # Root workspace configuration
 ```
 
 ## API Endpoints
 
+All endpoints return `{ success, data }` or `{ success: false, error: { message } }`.
+
 ### Applications
-- `GET /api/apps` - Get all applications
-- `GET /api/apps/:id` - Get application by ID
-- `POST /api/apps` - Create a new application
-- `DELETE /api/apps/:id` - Delete an application
-- `POST /api/apps/:id/start` - Start an application
-- `POST /api/apps/:id/stop` - Stop an application
-- `POST /api/apps/:id/upload` - Upload files to an application (coming soon)
+- `GET /api/apps` - List all applications
+- `GET /api/apps/:id` - Get an application by ID
+- `POST /api/apps` - Create an application (body: `{ name, deploy_type }`)
+- `DELETE /api/apps/:id` - Delete an application (must be stopped)
+- `POST /api/apps/:id/start` - Start (assigns a port, launches via PM2)
+- `POST /api/apps/:id/stop` - Stop
+- `POST /api/apps/:id/restart` - Restart
+- `POST /api/apps/:id/sync` - Reconcile DB status with actual PM2 process state
+- `GET /api/apps/:id/files` - List the application's deployed files
+- `POST /api/apps/:id/upload` - Upload files (`multipart/form-data`, field `files`; ZIPs auto-extract)
 
 ### System
-- `GET /api/health` - Health check endpoint
+- `GET /api/health` - Health check
 - `GET /` - Server information
 
 ## Configuration
 
-The application can be configured using environment variables. Copy `.env.example` to `.env` and adjust the values:
+Copy `.env.example` to `.env` and adjust:
 
 ```env
-# Server Configuration
+# Server
 PORT=5000
 HOST=0.0.0.0
 NODE_ENV=development
 
-# CORS Configuration
+# CORS
 CORS_ORIGIN=http://localhost:5173
 
-# Application Deployment Configuration
+# Database
+# DB_PATH=./data/microverse.sqlite
+
+# Deployed-app port range
 APP_PORT_MIN=3000
 APP_PORT_MAX=9000
 
-# File Upload Limits
-MAX_FILE_SIZE=104857600  # 100MB
+# File upload limits
+MAX_FILE_SIZE=104857600  # 100MB in bytes
 MAX_FILES=100
+
+# PM2
+PM2_INSTANCE_NAME=microverse-server
 ```
+
+> Note: the upload middleware currently enforces a 50MB per-file limit and an allow-list of extensions; the `MAX_FILE_SIZE` env is read by config but not yet wired into the middleware.
 
 ## Cross-Platform Compatibility
 
-This project is designed to work on both Windows and Linux:
+Designed to work on both Windows and Linux:
 
-- **Path handling**: Uses Node.js `path` module for cross-platform compatibility
-- **Environment variables**: Uses `cross-env` for setting environment variables
-- **File operations**: Uses Node.js fs APIs instead of shell commands
-- **Process management**: PM2 supports both Windows and Linux
+- **Path handling**: Node.js `path` module everywhere (no string-concatenated paths)
+- **Environment variables**: `cross-env` for Windows-compatible scripts
+- **File operations**: `fs` APIs instead of shell commands
+- **PM2 + Windows**: PM2 fork mode can't launch `.cmd` wrappers (npm, http-server), so `ProcessManager` resolves the JS entry points (`http-server/bin/http-server`, `npm/bin/npm-cli.js`) and runs them with `interpreter: 'node'`
+- **Database**: uses the `sqlite3` package (not `better-sqlite3`, which has Windows compilation issues)
 
 ## Development
 
@@ -196,45 +225,42 @@ cd client
 npm run dev
 ```
 
+Lint and build the frontend:
+```bash
+cd client
+npm run lint    # ESLint, --max-warnings 0
+npm run build   # Vite production build
+```
+
 ### Database
 
-The application uses SQLite for data storage. The database file is created automatically at `data/microverse.sqlite` when the server starts for the first time.
-
-To reset the database, simply delete the `data/microverse.sqlite` file and restart the server.
+SQLite stores application metadata. The database file is created automatically at `data/microverse.sqlite` on first server start. To reset it, delete the file and restart the server.
 
 ## Troubleshooting
 
 ### Port already in use
-If you get a "port already in use" error, either:
-- Stop the process using that port
-- Change the PORT in your `.env` file
+- Stop the process using that port, or change `PORT` in `.env`
 
 ### PM2 commands not found
-Install PM2 globally:
 ```bash
 npm install -g pm2
-```
-
-Or use npx:
-```bash
+# or
 npx pm2 list
 ```
 
 ### Database errors
-Delete the database file and restart:
 ```bash
-rm data/microverse.sqlite  # Linux/Mac
+rm data/microverse.sqlite   # Linux/Mac
 del data\microverse.sqlite  # Windows
 npm run dev:server
 ```
 
 ## Technology Stack
 
-- **Backend**: Node.js + Express + SQLite (better-sqlite3)
-- **Frontend**: React 18 + Vite + Ant Design
+- **Backend**: Node.js + Express + SQLite (`sqlite3`)
+- **Frontend**: React 18 + Vite + Ant Design 5 + react-i18next
 - **Process Management**: PM2
-- **Database**: SQLite
-- **Cross-Platform**: path module, cross-env, platform-agnostic APIs
+- **Cross-Platform**: `path` module, `cross-env`, platform-agnostic APIs
 
 ## License
 
