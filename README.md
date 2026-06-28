@@ -18,6 +18,20 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - 🌐 **Bilingual UI**: Chinese / English toggle, persisted per browser
 - 🎨 **Editorial Interface**: warm-paper, serif/mono, single accent — a deliberate, non-template look (see [design spec](docs/superpowers/specs/2026-06-28-editorial-ui-redesign-design.md))
 
+## Screenshots
+
+**Dashboard** — apps as numbered editorial rows (shown here in `Idle` state; running apps show a red `Live` status and a clickable port chip that opens the deployed app):
+
+![Dashboard](docs/assets/dashboard.png)
+
+**Create Application** — underline inputs, hairline select, ink submit button:
+
+![Create App](docs/assets/create-app.png)
+
+**Upload Files** — paper dropzone with the live per-file size limit (`100MB per file`, fetched from `GET /api/config` and driven by `MAX_FILE_SIZE`):
+
+![Upload Files](docs/assets/upload-files.png)
+
 ## 📚 Documentation
 
 **New to Microverse?** Start here:
