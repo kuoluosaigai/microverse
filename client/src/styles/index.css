@@ -1,23 +1,109 @@
-/* Reset and base styles */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+/* ===== Microverse — Editorial base ===== */
+
+:root {
+  --paper: #F4EFE6;
+  --surface: #FBF7F0;
+  --ink: #1A1714;
+  --ink-2: #6B5F4D;
+  --ink-3: #8A7E6B;
+  --rule: #D8CFBF;
+  --accent: #A8341E;
+  --idle: #A89C88;
+  --paper-hover: #EDE6D8;
+
+  --serif: Georgia, 'Times New Roman', serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root { min-height: 100vh; }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+::selection { background: var(--accent); color: var(--paper); }
+
+/* ===== Antd neutralization (token layer can't do these) ===== */
+
+/* Transparent cards / layouts so paper shows through */
+.ant-card,
+.ant-card-body,
+.ant-layout,
+.ant-layout-content { background: transparent !important; }
+
+/* Tags -> italic status words (kept for any stray usage) */
+.ant-tag { background: transparent !important; border: none !important;
+  font-family: var(--serif); font-style: italic; font-size: 13px; padding: 0; }
+
+/* Inputs: underline field, no chunky box */
+.ant-input, .ant-input-affix-wrapper {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--rule) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 6px 0 !important;
+  font-family: var(--serif) !important;
+  color: var(--ink) !important;
+}
+.ant-input:focus, .ant-input-focused,
+.ant-input-affix-wrapper:focus, .ant-input-affix-wrapper-focused {
+  border-bottom-color: var(--ink) !important;
+  box-shadow: none !important;
 }
 
-#root {
-  min-height: 100vh;
+/* Select: hairline underline */
+.ant-select .ant-select-selector {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--rule) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--serif) !important;
 }
+.ant-select-focused .ant-select-selector { border-bottom-color: var(--ink) !important; }
+.ant-select-dropdown { font-family: var(--serif) !important; }
+
+/* Form labels: mono small-caps */
+.ed-form .ant-form-item-label > label {
+  font-family: var(--mono) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10.5px !important;
+  color: var(--ink-3) !important;
+}
+.ed-form .ant-form-item { margin-bottom: 26px; }
+
+/* Modal: paper surface */
+.ant-modal-content {
+  background: var(--surface) !important;
+  border: 1px solid var(--rule);
+  border-radius: 0 !important;
+  font-family: var(--serif) !important;
+}
+.ant-modal-header { background: transparent !important; }
+.ant-modal-title { font-family: var(--serif) !important; font-weight: 600 !important; }
+
+/* Popconfirm / popover: paper */
+.ant-popover-inner { background: var(--surface) !important; border: 1px solid var(--rule); border-radius: 0; }
+
+/* Message: paper */
+.ant-message-notice-content { background: var(--ink) !important; color: var(--paper) !important;
+  border-radius: 0 !important; font-family: var(--mono); letter-spacing: 0.04em; }
+.ant-message-notice-content .anticon { color: var(--paper) !important; }
+
+/* Dragger: dashed paper frame (base; .dropzone adds layout) */
+.ant-upload.ant-upload-drag .ant-upload-drag-container,
+.ant-upload-drag {
+  background: transparent !important;
+  border: 1.5px dashed var(--rule) !important;
+  border-radius: 0 !important;
+}
+.ant-upload.ant-upload-drag .ant-upload-btn { padding: 40px 20px !important; }
+.ant-upload.ant-upload-drag:hover { border-color: var(--ink) !important; }
