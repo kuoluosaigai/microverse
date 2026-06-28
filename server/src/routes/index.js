@@ -6,6 +6,7 @@ const { upload } = require('../middleware/upload');
 const AdmZip = require('adm-zip');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config');
 
 /**
  * API Routes
@@ -250,7 +251,7 @@ router.post('/apps/:id/upload', async (req, res, next) => {
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({
             success: false,
-            error: { message: 'File size exceeds 50MB limit' }
+            error: { message: `File size exceeds ${Math.floor(config.deployment.maxFileSize / (1024 * 1024))}MB limit` }
           });
         }
         return res.status(400).json({

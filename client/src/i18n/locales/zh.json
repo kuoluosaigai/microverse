@@ -50,7 +50,7 @@
     "allowedTypes": "允许的文件类型",
     "allowedTypesValue": "HTML, CSS, JS, JSON, TXT, MD, 图片 (JPG, PNG, GIF, SVG, ICO), ZIP",
     "maxSize": "最大大小",
-    "maxSizeValue": "每次上传 50MB",
+    "maxSizeValue": "每个文件 100MB",
     "dragHint": "点击或拖拽文件到此区域上传",
     "dragDescription": "支持单个或多个文件上传。ZIP 文件将自动解压。",
     "selectedFiles": "已选择文件",

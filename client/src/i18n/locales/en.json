@@ -50,7 +50,7 @@
     "allowedTypes": "Allowed file types",
     "allowedTypesValue": "HTML, CSS, JS, JSON, TXT, MD, Images (JPG, PNG, GIF, SVG, ICO), ZIP",
     "maxSize": "Maximum size",
-    "maxSizeValue": "50MB per upload",
+    "maxSizeValue": "100MB per file",
     "dragHint": "Click or drag files to this area to upload",
     "dragDescription": "Support for single or multiple file upload. ZIP files will be automatically extracted.",
     "selectedFiles": "Selected Files",

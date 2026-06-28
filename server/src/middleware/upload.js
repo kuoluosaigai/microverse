@@ -1,13 +1,14 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config');
 
 /**
  * Multer configuration for file uploads
  */
 
-// File size limit: 50MB
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// File size limit — honors MAX_FILE_SIZE env (default 100MB, see config/index.js)
+const MAX_FILE_SIZE = config.deployment.maxFileSize;
 
 // Allowed file extensions
 const ALLOWED_EXTENSIONS = [
