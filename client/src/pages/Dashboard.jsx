@@ -1,14 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Layout, Typography, Button, Row, Col, Space, message, Spin } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { message } from 'antd'
 import { useTranslation } from 'react-i18next'
-import AppCard from '../components/AppCard'
+import EditorialShell from '../components/EditorialShell'
+import AppRow from '../components/AppRow'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import { getAllApps, deleteApp, startApp, stopApp } from '../api/apps'
-
-const { Header, Content } = Layout
-const { Title } = Typography
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -19,12 +16,8 @@ function Dashboard() {
 
   const loadApps = async (showRefreshing = false) => {
     try {
-      if (showRefreshing) {
-        setRefreshing(true)
-      } else {
-        setLoading(true)
-      }
-
+      if (showRefreshing) setRefreshing(true)
+      else setLoading(true)
       const data = await getAllApps()
       setApps(data)
     } catch (error) {
@@ -71,71 +64,59 @@ function Dashboard() {
     }
   }
 
-  return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#fff', padding: '0 24px', borderBottom: '1px solid #f0f0f0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-          <Title level={3} style={{ margin: 0 }}>
-            {t('common.appName')}
-          </Title>
-          <Space>
-            <LanguageSwitcher />
-            <Button
-              icon={<ReloadOutlined spin={refreshing} />}
-              onClick={() => loadApps(true)}
-              disabled={refreshing}
-            >
-              {t('dashboard.refreshApps')}
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => navigate('/create')}
-            >
-              {t('dashboard.createApp')}
-            </Button>
-          </Space>
-        </div>
-      </Header>
+  const runningCount = apps.filter((a) => a.status === 'running').length
+  const lead = t('dashboard.lead', { count: apps.length })
+  const suffix = runningCount ? ' ' + t('dashboard.runningSuffix', { count: runningCount }) : ''
 
-      <Content style={{ padding: '24px' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '100px 0' }}>
-            <Spin size="large" />
-          </div>
-        ) : apps.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '100px 0' }}>
-            <Title level={4} type="secondary">
-              {t('dashboard.noApps')}
-            </Title>
-            <p style={{ color: '#999', marginBottom: 24 }}>
-              {t('dashboard.noAppsDesc')}
-            </p>
-            <Button
-              type="primary"
-              size="large"
-              icon={<PlusOutlined />}
-              onClick={() => navigate('/create')}
-            >
-              {t('dashboard.createApp')}
-            </Button>
-          </div>
-        ) : (
-          <Row gutter={[16, 16]}>
-            {apps.map(app => (
-              <Col key={app.id} xs={24} sm={12} lg={8} xl={6}>
-                <AppCard
-                  app={app}
-                  onStart={handleStart}
-                  onStop={handleStop}
-                  onDelete={handleDelete}
-                />
-              </Col>
-            ))}
-          </Row>
-        )}
-      </Content>
-    </Layout>
+  const right = (
+    <>
+      <button
+        className="nav-link"
+        onClick={() => loadApps(true)}
+        disabled={refreshing}
+      >
+        {t('dashboard.refreshApps')}
+      </button>
+      <button className="nav-link accent" onClick={() => navigate('/create')}>
+        + {t('dashboard.createApp')}
+      </button>
+      <LanguageSwitcher />
+    </>
+  )
+
+  return (
+    <EditorialShell right={right}>
+      {!loading && <div className="lead">{lead}{suffix}</div>}
+
+      {loading ? (
+        <div className="loading-line">{t('dashboard.loading')}</div>
+      ) : apps.length === 0 ? (
+        <div className="empty">
+          <h2>{t('dashboard.noApps')}</h2>
+          <p>{t('dashboard.noAppsDesc')}</p>
+          <button
+            className="text-link accent"
+            style={{ marginTop: 20 }}
+            onClick={() => navigate('/create')}
+          >
+            {t('dashboard.emptyCta')}
+          </button>
+        </div>
+      ) : (
+        <ul className="app-list">
+          {apps.map((app, i) => (
+            <AppRow
+              key={app.id}
+              app={app}
+              index={i + 1}
+              onStart={handleStart}
+              onStop={handleStop}
+              onDelete={handleDelete}
+            />
+          ))}
+        </ul>
+      )}
+    </EditorialShell>
   )
 }
 

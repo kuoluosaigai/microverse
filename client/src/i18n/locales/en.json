@@ -18,10 +18,14 @@
   },
   "dashboard": {
     "title": "Applications Dashboard",
-    "createApp": "Create Application",
-    "noApps": "No Applications",
-    "noAppsDesc": "Click the button above to create your first application",
-    "refreshApps": "Refresh Applications"
+    "createApp": "New app",
+    "refreshApps": "Refresh",
+    "lead": "Deployed applications — {{count}}",
+    "runningSuffix": "· {{count}} running",
+    "noApps": "No applications yet",
+    "noAppsDesc": "Create your first application to deploy and manage it here.",
+    "emptyCta": "Create your first app →",
+    "loading": "Loading…"
   },
   "createApp": {
     "title": "Create Application",

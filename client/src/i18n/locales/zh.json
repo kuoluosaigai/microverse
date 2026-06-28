@@ -18,10 +18,14 @@
   },
   "dashboard": {
     "title": "应用仪表板",
-    "createApp": "创建应用",
+    "createApp": "新建应用",
+    "refreshApps": "刷新",
+    "lead": "已部署应用 — {{count}}",
+    "runningSuffix": "· {{count}} 个运行中",
     "noApps": "暂无应用",
-    "noAppsDesc": "点击上方按钮创建您的第一个应用",
-    "refreshApps": "刷新应用列表"
+    "noAppsDesc": "创建你的第一个应用，在此部署与管理。",
+    "emptyCta": "创建第一个应用 →",
+    "loading": "加载中…"
   },
   "createApp": {
     "title": "创建应用",
