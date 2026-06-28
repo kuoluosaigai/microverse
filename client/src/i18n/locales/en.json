@@ -76,8 +76,8 @@
     "directoryEmpty": "Directory is empty",
     "loadDirectoryError": "Failed to load directory",
     "status": {
-      "running": "running",
-      "stopped": "stopped"
+      "running": "Live",
+      "stopped": "Idle"
     },
     "deployTypes": {
       "http-server": "Static Site",
