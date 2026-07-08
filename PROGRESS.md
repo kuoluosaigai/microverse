@@ -97,15 +97,15 @@
 
 ## 待实现功能
 
-### 🎯 Phase 10: 日志管理 (优先级: 高)
-- [ ] 后端日志接口
-  - [ ] GET /api/apps/:id/logs - 获取应用日志
-  - [ ] 日志流式传输 (Server-Sent Events)
-  - [ ] 日志文件管理
-- [ ] 前端日志查看
-  - [ ] 日志查看器组件
-  - [ ] 实时日志显示
-  - [ ] 日志过滤和搜索
+### ✅ Phase 10: 日志管理 (2026-07-09)
+- [x] 后端日志接口
+  - [x] GET /api/apps/:id/logs/stream - SSE（历史 + 实时）
+  - [x] 15s 心跳保活；app 不存在返回 404 JSON
+- [x] 前端日志查看
+  - [x] 独立页面 /apps/:id/logs（AppLogs）
+  - [x] 实时追加 + 粘性自动滚动 + 跳到最新
+  - [x] LIVE/IDLE/DISCONNECTED 状态 + 手动重试
+  - [x] stderr accent 着色
 
 ### 🎯 Phase 11: npm 应用支持完善 (优先级: 中)
 - [ ] 上传后自动 `npm install`
@@ -178,8 +178,7 @@
 ## 下一步计划
 
 **立即任务**:
-1. 日志管理功能 (Phase 10) — 高价值，能在 UI 直接看 PM2 日志
-2. 补充基础单元 / 集成测试
+1. 补充基础单元 / 集成测试
 
 **短期目标**:
 1. 完善 npm 应用部署 (Phase 11) — 自动依赖安装 / 构建
@@ -202,6 +201,12 @@
 - 文档: Claude + Human Developer
 
 ## 变更日志
+
+### [Unreleased] — 2026-07-09
+#### 新增
+- 日志管理（Phase 10）：`GET /api/apps/:id/logs/stream` SSE（最近 N 行历史 + 实时推送）；`LogManager` 服务（解析 PM2 日志路径 + `fs.watch` 增量 tail，按字节偏移、行缓冲、轮转重置）；前端 `AppLogs` 页面（粘性自动滚动、LIVE/IDLE/DISCONNECTED + 重试、stderr 红色）；AppRow 新增 Logs 入口。
+#### 移除
+- `ProcessManager.getProcessLogs`（死代码，被 LogManager 取代）。
 
 ### [Unreleased] — 2026-06-28 ~ 2026-06-29
 #### 新增

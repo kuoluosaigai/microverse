@@ -15,6 +15,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - 🔗 **Central Dashboard**: View and access every deployed application from one place
 - ⚙️ **Port Management**: Automatic port allocation in a configurable range (3000–9000 by default)
 - 📊 **Status Sync**: `Live` / `Idle` status, reconciled with actual PM2 process state
+- 📜 **Live Logs**: stream each app's PM2 stdout/stderr from a dedicated logs page — recent history on open, then new lines in real time
 - 🌐 **Bilingual UI**: Chinese / English toggle, persisted per browser
 - 🎨 **Editorial Interface**: warm-paper, serif/mono, single accent — a deliberate, non-template look (see [design spec](docs/superpowers/specs/2026-06-28-editorial-ui-redesign-design.md))
 
@@ -133,6 +134,7 @@ npm run pm2:logs
 - **Start / Stop**: Toggle an app's process via PM2
 - **View Directory**: Inspect the deployed files in a modal
 - **Upload**: Add or replace files
+- **Logs**: Open the app's live log stream (stdout/stderr, history + real-time) on a dedicated page
 - **Delete**: Remove an app (must be stopped first; its PM2 entry is cleaned up)
 - **Refresh**: Re-fetch the app list; status is reconciled with PM2 on each request via the sync endpoint
 
@@ -180,6 +182,7 @@ All endpoints return `{ success, data }` or `{ success: false, error: { message 
 - `POST /api/apps/:id/sync` - Reconcile DB status with actual PM2 process state
 - `GET /api/apps/:id/files` - List the application's deployed files
 - `POST /api/apps/:id/upload` - Upload files (`multipart/form-data`, field `files`; ZIPs auto-extract)
+- `GET /api/apps/:id/logs/stream` - Live log stream (SSE; emits recent history then new lines; `?lines=N`, default 100)
 
 ### System
 - `GET /api/health` - Health check

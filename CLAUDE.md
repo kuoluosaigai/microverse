@@ -178,6 +178,7 @@ Key endpoints:
 - `POST /api/apps/:id/restart` - Restart app
 - `POST /api/apps/:id/sync` - Sync DB status with PM2 actual status
 - `GET /api/apps/:id/files` - List deployed files
+- `GET /api/apps/:id/logs/stream` - SSE stream of an app's logs (history then live; `?lines=N`)
 - `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard)
 
 ### Deployment Types
