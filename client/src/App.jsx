@@ -6,6 +6,7 @@ import enUS from 'antd/locale/en_US'
 import Dashboard from './pages/Dashboard'
 import CreateApp from './pages/CreateApp'
 import UploadFiles from './pages/UploadFiles'
+import AppLogs from './pages/AppLogs'
 
 const theme = {
   token: {
@@ -40,6 +41,7 @@ function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/create" element={<CreateApp />} />
         <Route path="/apps/:id/upload" element={<UploadFiles />} />
+        <Route path="/apps/:id/logs" element={<AppLogs />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ConfigProvider>

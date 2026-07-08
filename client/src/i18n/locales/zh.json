@@ -93,6 +93,17 @@
       "directory": "目录"
     }
   },
+  "appLogs": {
+    "title": "日志",
+    "lead": "最近的 stdout / stderr —— 实时推送",
+    "empty": "暂无日志 —— 启动应用后输出会显示在这里。",
+    "statusLive": "实时",
+    "statusIdle": "空闲",
+    "statusDisconnected": "已断开",
+    "retry": "重试",
+    "jumpLatest": "跳到最新 ↓",
+    "loadError": "加载应用失败"
+  },
   "messages": {
     "appCreated": "应用创建成功",
     "appDeleted": "应用删除成功",

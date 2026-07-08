@@ -116,4 +116,11 @@ export const getConfig = async () => {
   return response.data.data
 }
 
+/**
+ * EventSource URL for an app's live log stream (SSE).
+ * EventSource can't use axios; the consumer opens this URL directly.
+ */
+export const appLogsStreamUrl = (id, lines = 100) =>
+  `/api/apps/${id}/logs/stream?lines=${lines}`
+
 export default api

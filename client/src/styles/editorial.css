@@ -147,3 +147,25 @@
   .app-row .port, .app-row .kind, .app-row .status { grid-column: 2; }
   .app-row .acts { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
 }
+
+/* ----- Logs ----- */
+.log-view {
+  margin-top: 22px; height: 62vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--rule);
+  padding: 14px 18px; position: relative;
+}
+.log-line { font-family: var(--mono); font-size: 12px; line-height: 1.7;
+  color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.log-line.log-err { color: var(--accent); }
+.log-empty { font-family: var(--serif); font-size: 15px; color: var(--ink-3);
+  text-align: center; padding: 60px 0; }
+.log-toolbar { display: flex; align-items: center; justify-content: space-between;
+  margin-top: 14px; }
+.log-status { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.14em; color: var(--ink-3); }
+.log-status.live { color: var(--accent); }
+.log-status.disconnected { color: var(--accent); }
+.log-jump { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--ink-2); background: none; border: none;
+  border-bottom: 1px solid transparent; cursor: pointer; padding: 0 0 1px; }
+.log-jump:hover { color: var(--accent); border-bottom-color: var(--accent); }

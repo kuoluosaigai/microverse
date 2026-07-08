@@ -93,6 +93,17 @@
       "directory": "Directory"
     }
   },
+  "appLogs": {
+    "title": "Logs",
+    "lead": "Recent stdout / stderr — streaming live",
+    "empty": "No logs yet — start the app and output appears here.",
+    "statusLive": "Live",
+    "statusIdle": "Idle",
+    "statusDisconnected": "Disconnected",
+    "retry": "Retry",
+    "jumpLatest": "Jump to latest ↓",
+    "loadError": "Failed to load application"
+  },
   "messages": {
     "appCreated": "Application created successfully",
     "appDeleted": "Application deleted successfully",
