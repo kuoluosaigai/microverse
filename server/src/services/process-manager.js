@@ -228,18 +228,6 @@ class ProcessManager {
   }
 
   /**
-   * Get process logs
-   */
-  static async getProcessLogs(appName, lines = 50) {
-    try {
-      const { stdout } = await execPromise(`pm2 logs "${appName}" --lines ${lines} --nostream`);
-      return stdout;
-    } catch (error) {
-      throw new Error(`Failed to get process logs: ${error.message}`);
-    }
-  }
-
-  /**
    * Check if a port is available
    */
   static async isPortAvailable(port) {

@@ -7,6 +7,7 @@ const AdmZip = require('adm-zip');
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
+const LogManager = require('../services/log-manager');
 
 /**
  * API Routes
@@ -241,6 +242,92 @@ router.get('/apps/:id/files', async (req, res, next) => {
       });
     }
     next(error);
+  }
+});
+
+// Stream an app's PM2 logs as SSE (recent history + live).
+router.get('/apps/:id/logs/stream', async (req, res, next) => {
+  // 1. Resolve the app BEFORE writing SSE headers so 404 is clean JSON.
+  let app;
+  try {
+    app = await AppManager.getAppById(req.params.id);
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message },
+      });
+    }
+    return next(error);
+  }
+
+  // 2. Parse + clamp requested history size.
+  const requested = parseInt(req.query.lines, 10);
+  const lines = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, 1000)
+    : 100;
+
+  // 3. SSE headers + flush so the client connects immediately.
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  // Guarded writer — never throws after the client has gone away.
+  const send = (event, data) => {
+    if (res.writableEnded) return;
+    try {
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch (_err) {
+      /* client gone — req 'close' will clean up */
+    }
+  };
+
+  let cleaned = false;
+  const cleanup = (tailers, heartbeat) => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(heartbeat);
+    tailers.forEach((t) => t.stop());
+  };
+
+  try {
+    const paths = await LogManager.getLogPaths(app.name);
+
+    // 4. History: out first, then err (PM2 logs aren't timestamped, so exact
+    //    chronological merge of past lines isn't possible — live lines stream
+    //    in true order with a server send timestamp).
+    const history = [
+      ...LogManager.readHistory(paths.outPath, 'out', lines),
+      ...LogManager.readHistory(paths.errPath, 'err', lines),
+    ];
+    send('history', { lines: history });
+
+    // 5. Live tail both streams.
+    const tailers = [
+      LogManager.createTailer(paths.outPath, 'out', ({ level, msg }) =>
+        send('line', { level, msg, ts: Date.now() })
+      ),
+      LogManager.createTailer(paths.errPath, 'err', ({ level, msg }) =>
+        send('line', { level, msg, ts: Date.now() })
+      ),
+    ];
+
+    // 6. Keep-alive heartbeat.
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(': ping\n\n');
+    }, 15000);
+
+    // 7. Clean up on disconnect — single path, no watcher/timer leaks.
+    req.on('close', () => cleanup(tailers, heartbeat));
+    req.on('error', () => cleanup(tailers, heartbeat));
+  } catch (error) {
+    send('error', { message: error.message || 'Failed to stream logs' });
+    try { res.end(); } catch (_e) { /* ignore */ }
   }
 });
 

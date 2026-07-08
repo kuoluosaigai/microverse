@@ -110,19 +110,6 @@ class DeployManager {
   }
 
   /**
-   * Get application logs
-   */
-  static async getAppLogs(appId, lines = 50) {
-    const app = await AppManager.getAppById(appId);
-
-    if (app.status !== 'running') {
-      return '';
-    }
-
-    return ProcessManager.getProcessLogs(app.name, lines);
-  }
-
-  /**
    * Sync app status with PM2
    * Updates database based on actual PM2 process status
    */
