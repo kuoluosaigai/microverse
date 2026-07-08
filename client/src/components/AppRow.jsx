@@ -80,6 +80,9 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
           <button className="act" onClick={openDir}>
             {t('appCard.viewDirectory')}
           </button>
+          <button className="act" onClick={() => navigate(`/apps/${app.id}/logs`)}>
+            {t('appCard.logs')}
+          </button>
           <button
             className="act"
             onClick={() => navigate(`/apps/${app.id}/upload`)}

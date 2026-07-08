@@ -73,6 +73,7 @@
     "delete": "删除",
     "more": "更多",
     "viewDirectory": "查看部署目录",
+    "logs": "日志",
     "clickToOpen": "点击打开应用",
     "deleteTitle": "删除应用",
     "deleteConfirm": "确定要删除此应用吗？",
