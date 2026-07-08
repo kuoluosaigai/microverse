@@ -78,6 +78,7 @@ class LogManager {
     let lastSize = fs.statSync(filePath).size;
     let buffer = '';
     let watcher = null;
+    let poll = null;
     let stopped = false;
 
     const stop = () => {
@@ -87,6 +88,7 @@ class LogManager {
         watcher.removeAllListeners();
         try { watcher.close(); } catch (_e) { /* ignore */ }
       }
+      if (poll) { clearInterval(poll); poll = null; }
     };
 
     const readNew = () => {
@@ -137,6 +139,8 @@ class LogManager {
     } catch (_err) {
       stop();
     }
+
+    poll = setInterval(readNew, 750);
 
     return { stop };
   }
