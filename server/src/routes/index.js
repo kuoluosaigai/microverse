@@ -309,6 +309,13 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
   try {
     const paths = await LogManager.getLogPaths(app.name);
 
+    // If the client disconnected during the await above, cleanup already ran
+    // (cleaned === true). Bail before creating any tailers/heartbeat — Node is
+    // single-threaded so 'close' can't fire again until this sync block yields,
+    // meaning cleaned cannot flip true here mid-block; any later disconnect
+    // runs cleanup normally. Prevents the during-await leak at the source.
+    if (cleaned) return;
+
     // 4. History: out first, then err (PM2 logs aren't timestamped, so exact
     //    chronological merge of past lines isn't possible — live lines stream
     //    in true order with a server send timestamp).
@@ -332,11 +339,6 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
     heartbeat = setInterval(() => {
       if (!res.writableEnded) res.write(': ping\n\n');
     }, 15000);
-
-    // 7. If the client disconnected during the await above, cleanup already
-    //    ran (cleaned === true) — tear down what we just created right now
-    //    so nothing leaks.
-    if (cleaned) cleanup();
   } catch (error) {
     send('error', { message: error.message || 'Failed to stream logs' });
     try { res.end(); } catch (_e) { /* ignore */ }
