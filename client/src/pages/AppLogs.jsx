@@ -64,7 +64,7 @@ function AppLogs() {
     })
     es.addEventListener('line', (e) => {
       const data = JSON.parse(e.data)
-      setLines((prev) => [...prev, { level: data.level, msg: data.msg, ts: data.ts }])
+      setLines((prev) => [...prev, { level: data.level, msg: data.msg, ts: data.ts }].slice(-1000))
       markLive()
     })
     es.onerror = () => setStatus('disconnected')

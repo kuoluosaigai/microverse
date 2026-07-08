@@ -49,14 +49,34 @@ class LogManager {
    */
   static readHistory(filePath, level, lines = 100) {
     if (!filePath || !fs.existsSync(filePath)) return [];
-    let content;
+    // Bounded tail read: never load the whole file (a PM2 log can be hundreds
+    // of MB on a deployment box → would block the event loop + spike memory).
+    // 64 KB is enough for ~hundreds of typical log lines; the caller slices
+    // the last `lines` regardless.
+    const CHUNK = 64 * 1024;
+    let fd;
+    let parts;
     try {
-      content = fs.readFileSync(filePath, 'utf8');
+      const size = fs.statSync(filePath).size;
+      const start = Math.max(0, size - CHUNK);
+      fd = fs.openSync(filePath, 'r');
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const text = buf.toString('utf8');
+      parts = text.split('\n');
+      // If we started mid-file, the first element is a partial line (we began
+      // reading in the middle of a written line) — drop it. start === 0 means
+      // we read the whole file, so nothing is dropped and the result is
+      // identical to the old whole-file read.
+      if (start > 0) parts.shift();
     } catch (_err) {
       return [];
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch (_e) { /* ignore */ }
+      }
     }
-    return content
-      .split('\n')
+    return parts
       .filter((l) => l.length > 0)
       .slice(-lines)
       .map((msg) => ({ level, msg }));

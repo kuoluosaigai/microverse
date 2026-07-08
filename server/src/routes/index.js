@@ -287,13 +287,24 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
     }
   };
 
+  // Register disconnect cleanup IMMEDIATELY (before any await). getLogPaths
+  // spawns `pm2 jlist` (~100–500 ms); if the client drops in that window the
+  // 'close' event must already have a listener, or the heartbeat/tailers we
+  // create afterwards would leak (timer + fs.watch per tailer, forever).
+  // tailers/heartbeat are assigned later in the try block; if cleanup runs
+  // before they exist it's a no-op, and after assigning we re-check `cleaned`
+  // to tear down anything created during a late disconnect-during-await.
   let cleaned = false;
-  const cleanup = (tailers, heartbeat) => {
+  let tailers = [];
+  let heartbeat = null;
+  const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
-    clearInterval(heartbeat);
+    if (heartbeat) clearInterval(heartbeat);
     tailers.forEach((t) => t.stop());
   };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
 
   try {
     const paths = await LogManager.getLogPaths(app.name);
@@ -308,7 +319,7 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
     send('history', { lines: history });
 
     // 5. Live tail both streams.
-    const tailers = [
+    tailers = [
       LogManager.createTailer(paths.outPath, 'out', ({ level, msg }) =>
         send('line', { level, msg, ts: Date.now() })
       ),
@@ -318,13 +329,14 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
     ];
 
     // 6. Keep-alive heartbeat.
-    const heartbeat = setInterval(() => {
+    heartbeat = setInterval(() => {
       if (!res.writableEnded) res.write(': ping\n\n');
     }, 15000);
 
-    // 7. Clean up on disconnect — single path, no watcher/timer leaks.
-    req.on('close', () => cleanup(tailers, heartbeat));
-    req.on('error', () => cleanup(tailers, heartbeat));
+    // 7. If the client disconnected during the await above, cleanup already
+    //    ran (cleaned === true) — tear down what we just created right now
+    //    so nothing leaks.
+    if (cleaned) cleanup();
   } catch (error) {
     send('error', { message: error.message || 'Failed to stream logs' });
     try { res.end(); } catch (_e) { /* ignore */ }
