@@ -132,10 +132,11 @@ All API calls from frontend should use relative paths: `/api/apps`, not `http://
 Environment variables are loaded from root `.env` file (see `.env.example`).
 
 Config hierarchy: `server/src/config/index.js`
-- Server: PORT (5000), HOST (0.0.0.0)
+- Server: PORT (5000), HOST (0.0.0.0), NODE_ENV
 - CORS: CORS_ORIGIN (http://localhost:5173)
-- Deployment: APP_PORT_MIN (3000), APP_PORT_MAX (9000)
+- Deployment: APP_PORT_MIN (3000), APP_PORT_MAX (9000), MAX_FILE_SIZE (100MB), MAX_FILES (100)
 - Database: DB_PATH (data/microverse.sqlite)
+- PM2: PM2_INSTANCE_NAME (microverse-server)
 
 Config is validated on startup; invalid config throws immediately.
 
@@ -166,12 +167,18 @@ All endpoints return JSON with structure:
 ```
 
 Key endpoints:
+- `GET /api/health` - Health check
+- `GET /api/config` - Public client config (upload limits: maxFileSize, maxFiles)
 - `GET /api/apps` - List all apps
+- `GET /api/apps/:id` - Get app by ID
 - `POST /api/apps` - Create app (body: { name, deploy_type })
+- `DELETE /api/apps/:id` - Delete app (must be stopped first; cleans PM2 orphan)
 - `POST /api/apps/:id/start` - Start app (assigns port, launches PM2)
 - `POST /api/apps/:id/stop` - Stop app
+- `POST /api/apps/:id/restart` - Restart app
 - `POST /api/apps/:id/sync` - Sync DB status with PM2 actual status
-- `DELETE /api/apps/:id` - Delete app (must be stopped first)
+- `GET /api/apps/:id/files` - List deployed files
+- `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard)
 
 ### Deployment Types
 
