@@ -61,6 +61,85 @@ class LogManager {
       .slice(-lines)
       .map((msg) => ({ level, msg }));
   }
+
+  /**
+   * Watch a log file and call onLine({level,msg}) for each newly appended line.
+   * - Byte-offset incremental reads: idempotent under fs.watch's multi-fire.
+   * - Line buffer: a write split across two watch callbacks never yields a
+   *   half-line; only complete (newline-terminated) lines are emitted.
+   * - Truncation/rotation (e.g. `pm2 flush`): resets offset to 0.
+   * Returns { stop() } — no-op when filePath is null/missing. Safe to call stop() twice.
+   */
+  static createTailer(filePath, level, onLine) {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { stop() {} };
+    }
+
+    let lastSize = fs.statSync(filePath).size;
+    let buffer = '';
+    let watcher = null;
+    let stopped = false;
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      if (watcher) {
+        watcher.removeAllListeners();
+        try { watcher.close(); } catch (_e) { /* ignore */ }
+      }
+    };
+
+    const readNew = () => {
+      if (stopped) return;
+
+      let size;
+      try {
+        size = fs.statSync(filePath).size;
+      } catch (_err) {
+        stop(); // file deleted under us
+        return;
+      }
+
+      if (size < lastSize) {
+        // truncated / rotated — restart from the top
+        lastSize = 0;
+        buffer = '';
+      }
+
+      const length = size - lastSize;
+      if (length <= 0) return; // no new bytes (fs.watch noise)
+
+      let fd;
+      try {
+        fd = fs.openSync(filePath, 'r');
+        const chunk = Buffer.alloc(length);
+        fs.readSync(fd, chunk, 0, length, lastSize);
+        buffer += chunk.toString('utf8');
+
+        const parts = buffer.split('\n');
+        buffer = parts.pop(); // keep trailing partial line
+        for (const line of parts) {
+          if (line.length) onLine({ level, msg: line });
+        }
+        lastSize = size;
+      } catch (_err) {
+        stop();
+      } finally {
+        if (fd !== undefined) {
+          try { fs.closeSync(fd); } catch (_e) { /* ignore */ }
+        }
+      }
+    };
+
+    try {
+      watcher = fs.watch(filePath, () => readNew());
+      watcher.on('error', () => stop());
+    } catch (_err) {
+      stop();
+    }
+
+    return { stop };
+  }
 }
 
 module.exports = LogManager;
