@@ -292,8 +292,9 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
   // 'close' event must already have a listener, or the heartbeat/tailers we
   // create afterwards would leak (timer + fs.watch per tailer, forever).
   // tailers/heartbeat are assigned later in the try block; if cleanup runs
-  // before they exist it's a no-op, and after assigning we re-check `cleaned`
-  // to tear down anything created during a late disconnect-during-await.
+  // before they exist it's a no-op. After the getLogPaths await we gate on
+  // `cleaned` (return early) so a during-await disconnect never creates the
+  // leakable resources in the first place.
   let cleaned = false;
   let tailers = [];
   let heartbeat = null;
