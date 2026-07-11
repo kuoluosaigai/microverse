@@ -65,7 +65,9 @@ export const deleteApp = async (id) => {
  * Start an application
  */
 export const startApp = async (id) => {
-  const response = await api.post(`/apps/${id}/start`)
+  // npm apps run install/build before launch — can take minutes. Disable the
+  // default 10s axios timeout so the request survives the full lifecycle.
+  const response = await api.post(`/apps/${id}/start`, {}, { timeout: 0 })
   return response.data.data
 }
 
@@ -105,6 +107,24 @@ export const uploadFiles = async (id, files) => {
  */
 export const getAppFiles = async (id) => {
   const response = await api.get(`/apps/${id}/files`)
+  return response.data.data
+}
+
+/**
+ * Get an application's environment variables
+ */
+export const getAppEnv = async (id) => {
+  const response = await api.get(`/apps/${id}/env`)
+  return response.data.data
+}
+
+/**
+ * Replace an application's environment variables
+ * @param {number} id
+ * @param {Array<{key: string, value: string}>} env
+ */
+export const setAppEnv = async (id, env) => {
+  const response = await api.put(`/apps/${id}/env`, { env })
   return response.data.data
 }
 
