@@ -1,6 +1,7 @@
 const { queries } = require('../db');
 const pathHelper = require('../utils/path-helper');
 const ProcessManager = require('./process-manager');
+const NpmLifecycle = require('./npm-lifecycle');
 const fs = require('fs');
 const path = require('path');
 
@@ -120,6 +121,23 @@ class AppManager {
   }
 
   /**
+   * Get environment variables for an app (forwarded to queries).
+   */
+  static async getAppEnv(id) {
+    await this.getAppById(id); // throws 'App not found' if missing
+    return queries.getAppEnv(id);
+  }
+
+  /**
+   * Replace environment variables for an app (forwarded to queries).
+   * entries: [{ key, value }]
+   */
+  static async setAppEnv(id, entries) {
+    await this.getAppById(id);
+    return queries.setAppEnv(id, entries);
+  }
+
+  /**
    * Get app directory contents
    */
   static async getAppFiles(id) {
@@ -155,11 +173,18 @@ class AppManager {
     }
 
     switch (app.deploy_type) {
-      case 'npm':
-        if (!files.includes('package.json')) {
-          return { valid: false, message: 'Missing package.json for npm deployment' };
+      case 'npm': {
+        let pkg;
+        try {
+          pkg = NpmLifecycle.readPackageJson(app.path);
+        } catch (err) {
+          return { valid: false, message: err.message };
+        }
+        if (!pkg.scripts || typeof pkg.scripts.start !== 'string' || !pkg.scripts.start.trim()) {
+          return { valid: false, message: 'Missing start script in package.json' };
         }
         break;
+      }
 
       case 'http-server':
         if (!files.includes('index.html')) {
