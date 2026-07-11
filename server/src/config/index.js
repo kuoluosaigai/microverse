@@ -40,7 +40,11 @@ const config = {
 
     // File upload limits
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 100 * 1024 * 1024, // 100MB
-    maxFiles: parseInt(process.env.MAX_FILES) || 100
+    maxFiles: parseInt(process.env.MAX_FILES) || 100,
+
+    // npm install / build timeouts (ms)
+    npmInstallTimeoutMs: parseInt(process.env.NPM_INSTALL_TIMEOUT_MS) || 300000,
+    npmBuildTimeoutMs: parseInt(process.env.NPM_BUILD_TIMEOUT_MS) || 300000
   },
 
   // PM2 configuration
