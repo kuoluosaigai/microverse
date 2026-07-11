@@ -104,18 +104,17 @@ CREATE INDEX IF NOT EXISTS idx_app_env_app_id ON app_env(app_id);
   }
 ```
 
-- [ ] **Step 3: 手动验证表与查询**
+- [ ] **Step 3: 手动验证表已创建（不删库）**
 
-删除旧库以触发 schema 重建（开发期可接受；如不愿丢数据，`sqlite3 data/microverse.sqlite < server/src/db/schema.sql` 手动追加）：
+`db/index.js` 的 `initDatabase()` 每次启动都执行 schema，且 `app_env` 用 `CREATE TABLE IF NOT EXISTS`，所以重启服务器即自动建表，**无需删库、不丢现有应用数据**：
 ```bash
-rm -f data/microverse.sqlite
 cd server && npm run dev
 ```
-服务器启动应打印 `✓ Database initialized successfully`。Ctrl+C 停止。
+启动日志应含 `✓ Database initialized successfully`。Ctrl+C 停止。
 
-确认表存在（另开终端）：
+确认表存在：
 ```bash
-node -e "const s=require('sqlite3').verbose();const db=new s.Database('data/microverse.sqlite');db.all(\"SELECT name FROM sqlite_master WHERE type='table' AND name='app_env'\",(_,r)=>{console.log(r);db.close()})"
+node -e "const s=require('sqlite3').verbose();const db=new s.Database('../data/microverse.sqlite');db.all(\"SELECT name FROM sqlite_master WHERE type='table' AND name='app_env'\",(_,r)=>{console.log(r);db.close()})"
 ```
 预期：`[ { name: 'app_env' } ]`
 
