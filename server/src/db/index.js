@@ -118,7 +118,32 @@ const queries = {
 
   updateAppStatus: (status, id) => dbRun('UPDATE apps SET status = ? WHERE id = ?', [status, id]),
 
-  deleteApp: (id) => dbRun('DELETE FROM apps WHERE id = ?', [id])
+  deleteApp: (id) => dbRun('DELETE FROM apps WHERE id = ?', [id]),
+
+  getAppEnv: (appId) => dbAll(
+    'SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id',
+    [appId]
+  ),
+
+  setAppEnv: async (appId, entries) => {
+    // Atomic replace: delete all, then insert. sqlite3 runs statements in
+    // order on a single connection, so awaited dbRun calls serialize.
+    await dbRun('BEGIN TRANSACTION');
+    try {
+      await dbRun('DELETE FROM app_env WHERE app_id = ?', [appId]);
+      for (const entry of entries) {
+        await dbRun(
+          'INSERT INTO app_env (app_id, key, value) VALUES (?, ?, ?)',
+          [appId, entry.key, entry.value === undefined ? null : entry.value]
+        );
+      }
+      await dbRun('COMMIT');
+    } catch (err) {
+      await dbRun('ROLLBACK').catch(() => { /* ignore rollback failure */ });
+      throw err;
+    }
+    return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
+  }
 };
 
 module.exports = {

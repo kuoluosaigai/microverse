@@ -23,3 +23,17 @@ FOR EACH ROW
 BEGIN
   UPDATE apps SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
+
+-- Per-app environment variables (injected into PM2 at start)
+CREATE TABLE IF NOT EXISTS app_env (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+  UNIQUE(app_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_env_app_id ON app_env(app_id);
