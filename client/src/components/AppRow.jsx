@@ -4,8 +4,9 @@ import { Modal, Spin, Popconfirm, message } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles } from '../api/apps'
+import EnvModal from './EnvModal'
 
-function AppRow({ app, index, onStart, onStop, onDelete }) {
+function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const isRunning = app.status === 'running'
@@ -13,6 +14,8 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
   const [dirOpen, setDirOpen] = useState(false)
   const [files, setFiles] = useState([])
   const [loadingDir, setLoadingDir] = useState(false)
+  const [envOpen, setEnvOpen] = useState(false)
+  const starting = startingId === app.id
 
   const openDir = async () => {
     setDirOpen(true)
@@ -73,8 +76,8 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
               {t('appCard.stop')}
             </button>
           ) : (
-            <button className="act" onClick={() => onStart(app.id)}>
-              {t('appCard.start')}
+            <button className="act" onClick={() => onStart(app.id)} disabled={starting}>
+              {starting ? t('appCard.starting') : t('appCard.start')}
             </button>
           )}
           <button className="act" onClick={openDir}>
@@ -89,6 +92,11 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
           >
             {t('appCard.upload')}
           </button>
+          {app.deploy_type === 'npm' && (
+            <button className="act" onClick={() => setEnvOpen(true)}>
+              {t('appCard.env')}
+            </button>
+          )}
           <Popconfirm
             title={t('appCard.deleteTitle')}
             description={t('appCard.deleteConfirm')}
@@ -140,6 +148,10 @@ function AppRow({ app, index, onStart, onStop, onDelete }) {
           </ul>
         )}
       </Modal>
+
+      {app.deploy_type === 'npm' && (
+        <EnvModal appId={app.id} open={envOpen} onCancel={() => setEnvOpen(false)} />
+      )}
     </>
   )
 }

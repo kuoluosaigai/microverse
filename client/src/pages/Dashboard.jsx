@@ -13,6 +13,7 @@ function Dashboard() {
   const [apps, setApps] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [startingId, setStartingId] = useState(null)
 
   const loadApps = async (showRefreshing = false) => {
     try {
@@ -35,12 +36,15 @@ function Dashboard() {
   }, [])
 
   const handleStart = async (appId) => {
+    setStartingId(appId)
     try {
       await startApp(appId)
       message.success(t('messages.appStarted'))
       await loadApps(true)
     } catch (error) {
       message.error(error.response?.data?.error?.message || t('messages.operationFailed'))
+    } finally {
+      setStartingId(null)
     }
   }
 
@@ -112,6 +116,7 @@ function Dashboard() {
               onStart={handleStart}
               onStop={handleStop}
               onDelete={handleDelete}
+              startingId={startingId}
             />
           ))}
         </ul>
