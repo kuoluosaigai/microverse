@@ -111,7 +111,7 @@ npm run pm2:logs
 2. Enter a unique application name (alphanumeric, dash, and underscore only)
 3. Select a deployment type:
    - **Static Site (http-server)**: For HTML/CSS/JS static websites
-   - **Node.js (npm)**: For Node.js applications with a `package.json` `start` script
+   - **Node.js (npm)**: For Node.js applications with a `package.json` `start` script (dependencies install and an optional build run automatically on start)
    - **Nginx**: Coming soon
 4. Submit — the app appears on the dashboard as `Idle`
 
@@ -124,7 +124,7 @@ npm run pm2:logs
 
 ### Deploying & Accessing
 
-1. Click **Start** on the app row — a port is assigned automatically
+1. Click **Start** on the app row — a port is assigned automatically. For **npm** apps the first start also runs `npm install` (and `npm run build` if a build script exists), so the button shows **Starting…** until the process is live.
 2. The status flips to **Live** and the port becomes a clickable chip
 3. Click the port chip to open the deployed app at `http://localhost:<port>`
 4. Use **Stop** to take it back to **Idle**
