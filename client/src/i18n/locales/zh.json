@@ -74,6 +74,8 @@
     "more": "更多",
     "viewDirectory": "查看部署目录",
     "logs": "日志",
+    "env": "环境变量",
+    "starting": "启动中…",
     "clickToOpen": "点击打开应用",
     "deleteTitle": "删除应用",
     "deleteConfirm": "确定要删除此应用吗？",
@@ -104,6 +106,19 @@
     "retry": "重试",
     "jumpLatest": "跳到最新 ↓",
     "loadError": "加载应用失败"
+  },
+  "appEnv": {
+    "title": "环境变量",
+    "keyPlaceholder": "KEY",
+    "valuePlaceholder": "value",
+    "addRow": "新增",
+    "save": "保存",
+    "saveSuccess": "环境变量已保存",
+    "saveError": "保存环境变量失败",
+    "loadError": "加载环境变量失败",
+    "keyInvalid": "变量名非法（仅字母/数字/下划线，不以数字开头）",
+    "keyDuplicate": "存在重复的变量名",
+    "applyHint": "环境变量在下次启动时生效（修改后需重启应用）。"
   },
   "messages": {
     "appCreated": "应用创建成功",

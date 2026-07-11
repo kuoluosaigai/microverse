@@ -74,6 +74,8 @@
     "more": "More",
     "viewDirectory": "View Deployment Directory",
     "logs": "Logs",
+    "env": "Environment",
+    "starting": "Starting…",
     "clickToOpen": "Click to open app",
     "deleteTitle": "Delete application",
     "deleteConfirm": "Are you sure you want to delete this app?",
@@ -104,6 +106,19 @@
     "retry": "Retry",
     "jumpLatest": "Jump to latest ↓",
     "loadError": "Failed to load application"
+  },
+  "appEnv": {
+    "title": "Environment",
+    "keyPlaceholder": "KEY",
+    "valuePlaceholder": "value",
+    "addRow": "Add row",
+    "save": "Save",
+    "saveSuccess": "Environment saved",
+    "saveError": "Failed to save environment",
+    "loadError": "Failed to load environment",
+    "keyInvalid": "Invalid key (letters/digits/underscore only, not starting with a digit)",
+    "keyDuplicate": "Duplicate key",
+    "applyHint": "Environment applies on next start (restart the app after changing)."
   },
   "messages": {
     "appCreated": "Application created successfully",
