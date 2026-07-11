@@ -1,5 +1,6 @@
 const AppManager = require('./app-manager');
 const ProcessManager = require('./process-manager');
+const NpmLifecycle = require('./npm-lifecycle');
 const { queries } = require('../db');
 const config = require('../config');
 
@@ -26,19 +27,26 @@ class DeployManager {
       throw new Error('App is already running');
     }
 
-    // Assign port if needed
-    if (app.deploy_type === 'http-server' && !app.port) {
+    // Assign port if needed — both http-server and npm get a platform port.
+    // npm apps receive it via the PORT env var (resolved below).
+    if (!app.port) {
       const port = await ProcessManager.findAvailablePort(
         config.deployment.portRangeMin,
         config.deployment.portRangeMax
       );
-
       await AppManager.updateApp(appId, { port });
       app.port = port;
     }
 
-    // Start the process
-    await ProcessManager.startProcess(app);
+    // Start the process. For npm: install → build → resolve env → launch with env.
+    if (app.deploy_type === 'npm') {
+      await NpmLifecycle.install(app.path);
+      await NpmLifecycle.build(app.path);
+      const env = await NpmLifecycle.resolveEnv(appId, app.port);
+      await ProcessManager.startProcess(app, { env });
+    } else {
+      await ProcessManager.startProcess(app);
+    }
 
     // Update status in database
     await queries.updateAppStatus('running', appId);
