@@ -10,7 +10,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - 📤 **Drag-and-drop Upload**: Upload individual files or a ZIP archive (auto-extracted on upload)
 - 🚀 **Multiple Deploy Options**:
   - `http-server` — for static sites (requires `index.html`)
-  - `npm` — for Node.js applications (requires `package.json` with a `start` script)
+  - `npm` — for Node.js applications (requires `package.json` with a `start` script; auto-runs `npm install` + optional `npm run build` on start; platform assigns a port and injects `PORT` + your env vars)
   - `nginx` — placeholder (not yet implemented)
 - 🔗 **Central Dashboard**: View and access every deployed application from one place
 - ⚙️ **Port Management**: Automatic port allocation in a configurable range (3000–9000 by default)
@@ -135,6 +135,7 @@ npm run pm2:logs
 - **View Directory**: Inspect the deployed files in a modal
 - **Upload**: Add or replace files
 - **Logs**: Open the app's live log stream (stdout/stderr, history + real-time) on a dedicated page
+- **Environment (npm only)**: Click **Environment** on an npm app's row to set key/value env vars (e.g. `API_KEY`). They're injected on the next start — change them, then restart. The platform also assigns each npm app a port and exposes it as `PORT`.
 - **Delete**: Remove an app (must be stopped first; its PM2 entry is cleaned up)
 - **Refresh**: Re-fetch the app list; status is reconciled with PM2 on each request via the sync endpoint
 
@@ -183,6 +184,8 @@ All endpoints return `{ success, data }` or `{ success: false, error: { message 
 - `GET /api/apps/:id/files` - List the application's deployed files
 - `POST /api/apps/:id/upload` - Upload files (`multipart/form-data`, field `files`; ZIPs auto-extract)
 - `GET /api/apps/:id/logs/stream` - Live log stream (SSE; emits recent history then new lines; `?lines=N`, default 100)
+- `GET /api/apps/:id/env` - List an app's environment variables
+- `PUT /api/apps/:id/env` - Replace an app's environment variables (`{ env: [{ key, value }] }`; applies on next start)
 
 ### System
 - `GET /api/health` - Health check
@@ -212,6 +215,10 @@ APP_PORT_MAX=9000
 # File upload limits
 MAX_FILE_SIZE=104857600  # 100MB in bytes
 MAX_FILES=100
+
+# npm install / build timeouts (ms, default 300000)
+NPM_INSTALL_TIMEOUT_MS=300000
+NPM_BUILD_TIMEOUT_MS=300000
 
 # PM2
 PM2_INSTANCE_NAME=microverse-server

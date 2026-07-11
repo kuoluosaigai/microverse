@@ -3,8 +3,8 @@
 ## 当前状态
 
 **版本**: v1.0.0（package.json；其后已追加文件上传、i18n、editorial UI 改版等特性，尚未打新 tag）
-**最后更新**: 2026-07-09
-**状态**: ✅ 核心功能 + 文件上传 + 双语 + editorial UI 均已完成，可用于生产（nginx 类型除外）
+**最后更新**: 2026-07-12
+**状态**: ✅ 核心功能 + 文件上传 + 双语 + editorial UI + 日志 + npm 自动 install/build/环境变量 均已完成，可用于生产（nginx 类型除外）
 
 ## 已完成功能
 
@@ -92,7 +92,7 @@
 ## 当前支持的部署类型
 
 - ✅ **Static Site (http-server)** - 完全可用（自动端口分配、PM2 进程管理、启停）
-- ✅ **Node.js (npm)** - 可用（Windows 兼容性已于 2026-06-28 修复；依赖安装 / 构建步骤仍未自动化）
+- ✅ **Node.js (npm)** - 完全可用（start 时自动 `npm install` + 可选 `npm run build`；平台分配端口并注入 `PORT`；可配置环境变量）
 - ❌ **Nginx** - 未实现（schema 中保留占位，前端 Select 中禁用）
 
 ## 待实现功能
@@ -107,11 +107,12 @@
   - [x] LIVE/IDLE/DISCONNECTED 状态 + 手动重试
   - [x] stderr accent 着色
 
-### 🎯 Phase 11: npm 应用支持完善 (优先级: 中)
-- [ ] 上传后自动 `npm install`
-- [ ] 构建步骤支持 (`npm run build`)
-- [ ] package.json start 脚本校验加强
-- [ ] 环境变量管理
+### ✅ Phase 11: npm 应用支持完善 (2026-07-12)
+- [x] start 时自动 `npm install`
+- [x] 构建步骤支持（`npm run build`，存在 build 脚本时）
+- [x] package.json start 脚本校验加强（缺脚本 start 前 400 拒绝）
+- [x] 环境变量管理（`app_env` 表 + GET/PUT API + EnvModal UI + PM2 注入）
+- [x] 平台为 npm 应用分配端口并注入 `PORT`
 
 ### 🎯 Phase 12: Nginx 部署支持 (优先级: 低)
 - [ ] Nginx 配置文件生成
@@ -201,6 +202,17 @@
 - 文档: Claude + Human Developer
 
 ## 变更日志
+
+### [Unreleased] — 2026-07-12
+#### 新增
+- Phase 11：npm 应用 start 时自动 `npm install` + 可选 `npm run build`；新增 `NpmLifecycle` 服务
+- 环境变量管理：`app_env` 表 + `GET/PUT /api/apps/:id/env` + 前端 `EnvModal` 组件
+- 平台为 npm 应用分配端口并注入 `PORT`；npm 应用在 Dashboard 出现可点击端口 chip
+- npm `start` 脚本校验（缺脚本在 start 前 400 拒绝，不再崩溃后才暴露）
+- `ProcessManager.writeEcosystemConfig` 抽取，消除重复
+- start 请求关闭 axios 超时；Dashboard 增加 `startingId` 启动反馈态
+#### 补登（2026-07-09 之后、此前未入账）
+- SSE 日志流断连资源泄漏加固（`90f5cc4` `1a99842` `34aa08d`）
 
 ### [Unreleased] — 2026-07-09
 #### 新增

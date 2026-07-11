@@ -185,7 +185,7 @@ Key endpoints:
 
 Currently supported:
 - `http-server` - Static sites (requires `index.html`)
-- `npm` - Node.js apps (requires `package.json` with start script)
+- `npm` - Node.js apps (requires `package.json` with start script; on start auto-runs `npm install` + optional `npm run build`, assigns a platform port injected as `PORT`, and injects user env vars from the `app_env` table)
 - `nginx` - Placeholder (not implemented)
 
 Each type has different validation rules in `AppManager.validateAppDeployment()`.
@@ -206,14 +206,16 @@ Services throw descriptive errors; routes catch and map to appropriate HTTP stat
 2. Add case in `ProcessManager.startProcess()`
 3. Add validation in `AppManager.validateAppDeployment()`
 
+**Injecting environment variables**: `DeployManager.deployApp` calls `NpmLifecycle.resolveEnv(appId, port)` and passes `{ env }` to `ProcessManager.startProcess(app, { env })`, which writes it into the PM2 ecosystem config. User env vars live in the `app_env` table, edited via `GET/PUT /api/apps/:id/env` (UI: `EnvModal`). Env is baked at launch — changes require a restart.
+
 **Adding new API endpoint**:
 1. Add route in `server/src/routes/index.js`
 2. Use async/await for all database operations
 3. Map service errors to HTTP status codes
 
 **Database schema changes**:
-1. Modify `schema.sql`
-2. Delete `data/microverse.sqlite` to recreate
+1. Modify `schema.sql` (use `CREATE TABLE IF NOT EXISTS` for additive tables like `app_env` — no DB deletion needed; the server re-runs the schema on every start)
+2. For breaking changes only: delete `data/microverse.sqlite` to recreate
 3. Update query functions in `server/src/db/index.js`
 
 ## Testing
