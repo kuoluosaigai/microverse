@@ -448,4 +448,63 @@ router.post('/apps/:id/upload', async (req, res, next) => {
   }
 });
 
+// Get application environment variables
+router.get('/apps/:id/env', async (req, res, next) => {
+  try {
+    const env = await AppManager.getAppEnv(req.params.id);
+    res.json({ success: true, data: env });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    next(error);
+  }
+});
+
+// Replace application environment variables
+router.put('/apps/:id/env', async (req, res, next) => {
+  try {
+    const { env } = req.body;
+    if (!Array.isArray(env)) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'env must be an array of { key, value }' }
+      });
+    }
+
+    const keyRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const seen = new Set();
+    for (const entry of env) {
+      if (!entry || typeof entry.key !== 'string' || !keyRe.test(entry.key)) {
+        return res.status(400).json({
+          success: false,
+          error: { message: `Invalid env key: ${entry && entry.key}` }
+        });
+      }
+      if (seen.has(entry.key)) {
+        return res.status(400).json({
+          success: false,
+          error: { message: `Duplicate env key: ${entry.key}` }
+        });
+      }
+      seen.add(entry.key);
+    }
+
+    const entries = env.map(e => ({ key: e.key, value: e.value === undefined ? null : e.value }));
+    const result = await AppManager.setAppEnv(req.params.id, entries);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    next(error);
+  }
+});
+
 module.exports = router;
