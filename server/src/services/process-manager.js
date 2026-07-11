@@ -61,9 +61,30 @@ class ProcessManager {
   }
 
   /**
+   * Write a temporary PM2 ecosystem config and schedule its deletion.
+   * Shared by all deploy types to avoid duplicated write+cleanup code.
+   * Returns the config file path (caller runs `pm2 start <path>`).
+   */
+  static writeEcosystemConfig(appPath, name, appsEntry) {
+    const ecosystemConfig = { apps: [appsEntry] };
+    const configPath = path.join(appPath, `pm2.${name}.config.js`);
+    fs.writeFileSync(
+      configPath,
+      `module.exports = ${JSON.stringify(ecosystemConfig, null, 2)}`
+    );
+    // PM2 reads the file synchronously during start; 5s is enough, then clean up.
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
+      } catch (_err) { /* ignore */ }
+    }, 5000);
+    return configPath;
+  }
+
+  /**
    * Start an application process
    */
-  static async startProcess(app) {
+  static async startProcess(app, options = {}) {
     const { name, path: appPath, deploy_type, port } = app;
 
     switch (deploy_type) {
@@ -75,32 +96,22 @@ class ProcessManager {
         const resolvedJs = npmCliPath !== 'npm';
 
         try {
-          const ecosystemConfig = {
-            apps: [{
-              name: name,
-              script: npmCliPath,
-              args: 'start',
-              cwd: appPath,
-              interpreter: resolvedJs ? 'node' : 'none',
-              exec_mode: 'fork',
-              autorestart: true
-            }]
+          const appsEntry = {
+            name: name,
+            script: npmCliPath,
+            args: 'start',
+            cwd: appPath,
+            interpreter: resolvedJs ? 'node' : 'none',
+            exec_mode: 'fork',
+            autorestart: true
           };
+          // Inject resolved env (PORT + user vars) for npm apps.
+          if (options.env && typeof options.env === 'object') {
+            appsEntry.env = options.env;
+          }
 
-          const configPath = path.join(appPath, `pm2.${name}.config.js`);
-          fs.writeFileSync(
-            configPath,
-            `module.exports = ${JSON.stringify(ecosystemConfig, null, 2)}`
-          );
-
+          const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
           await execPromise(`pm2 start "${configPath}"`);
-
-          // Clean up config file after a delay
-          setTimeout(() => {
-            try {
-              if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
-            } catch (err) { /* ignore */ }
-          }, 5000);
 
           return { success: true, message: `Process ${name} started` };
         } catch (error) {
@@ -118,34 +129,20 @@ class ProcessManager {
           // Use node to run http-server directly (cross-platform)
           const httpServerPath = this.getHttpServerPath();
 
-          const ecosystemConfig = {
-            apps: [{
-              name: name,
-              script: httpServerPath,
-              args: `. -p ${port}`,
-              cwd: appPath,
-              interpreter: 'node', // Use node interpreter
-              exec_mode: 'fork',
-              autorestart: true,
-              max_restarts: 10,
-              min_uptime: 1000
-            }]
+          const appsEntry = {
+            name: name,
+            script: httpServerPath,
+            args: `. -p ${port}`,
+            cwd: appPath,
+            interpreter: 'node', // Use node interpreter
+            exec_mode: 'fork',
+            autorestart: true,
+            max_restarts: 10,
+            min_uptime: 1000
           };
 
-          const configPath = path.join(appPath, `pm2.${name}.config.js`);
-          fs.writeFileSync(
-            configPath,
-            `module.exports = ${JSON.stringify(ecosystemConfig, null, 2)}`
-          );
-
+          const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
           await execPromise(`pm2 start "${configPath}"`);
-
-          // Clean up config file after a delay
-          setTimeout(() => {
-            try {
-              if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
-            } catch (err) { /* ignore */ }
-          }, 5000);
 
           return { success: true, message: `Process ${name} started` };
         } catch (error) {
