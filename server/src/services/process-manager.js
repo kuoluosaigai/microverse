@@ -225,35 +225,46 @@ class ProcessManager {
   }
 
   /**
-   * Check if a port is available
+   * Probe whether (host, port) can be bound. Resolves true on listen, false on
+   * EADDRINUSE or any other bind error (treated as unavailable).
    */
-  static async isPortAvailable(port) {
+  static probeBind(host, port, ipv6Only = false) {
     return new Promise((resolve) => {
       const net = require('net');
       const server = net.createServer();
-
-      server.once('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-          resolve(false);
-        } else {
-          resolve(false);
-        }
-      });
-
+      server.once('error', () => resolve(false));
       server.once('listening', () => {
         server.close();
         resolve(true);
       });
-
-      server.listen(port);
+      if (ipv6Only) {
+        server.listen({ port, host, ipv6Only: true });
+      } else {
+        server.listen(port, host);
+      }
     });
   }
 
   /**
-   * Find an available port in range
+   * Check if a port is free on BOTH IPv4 and IPv6. A single-stack listener
+   * (e.g. http-server binding 0.0.0.0) is enough to make the port occupied —
+   * previously we only probed one stack and missed the other.
    */
-  static async findAvailablePort(minPort, maxPort) {
+  static async isPortAvailable(port) {
+    const v4 = await this.probeBind('0.0.0.0', port, false);
+    if (!v4) return false;
+    return this.probeBind('::', port, true);
+  }
+
+  /**
+   * Find an available port in range, skipping any port in options.exclude
+   * (ports already claimed by other apps). A port is returned only if it is
+   * not excluded AND free on both stacks.
+   */
+  static async findAvailablePort(minPort, maxPort, options = {}) {
+    const exclude = new Set(Array.isArray(options.exclude) ? options.exclude : []);
     for (let port = minPort; port <= maxPort; port++) {
+      if (exclude.has(port)) continue;
       if (await this.isPortAvailable(port)) {
         return port;
       }
