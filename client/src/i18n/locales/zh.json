@@ -74,6 +74,7 @@
     "more": "更多",
     "viewDirectory": "查看部署目录",
     "logs": "日志",
+    "metrics": "监控",
     "env": "环境变量",
     "starting": "启动中…",
     "clickToOpen": "点击打开应用",
@@ -105,6 +106,16 @@
     "statusDisconnected": "已断开",
     "retry": "重试",
     "jumpLatest": "跳到最新 ↓",
+    "loadError": "加载应用失败"
+  },
+  "appMetrics": {
+    "title": "监控",
+    "lead": "资源使用 —— 每 10 秒采样",
+    "cpu": "CPU",
+    "memory": "内存",
+    "uptime": "运行时长",
+    "empty": "暂无数据 —— 启动应用后采样会显示在这里。",
+    "stale": "数据未更新",
     "loadError": "加载应用失败"
   },
   "appEnv": {

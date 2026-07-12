@@ -86,6 +86,9 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
           <button className="act" onClick={() => navigate(`/apps/${app.id}/logs`)}>
             {t('appCard.logs')}
           </button>
+          <button className="act" onClick={() => navigate(`/apps/${app.id}/metrics`)}>
+            {t('appCard.metrics')}
+          </button>
           <button
             className="act"
             onClick={() => navigate(`/apps/${app.id}/upload`)}

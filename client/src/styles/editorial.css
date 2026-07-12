@@ -196,3 +196,22 @@
 }
 .env-add:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .env-hint { font-family: var(--serif); font-size: 13px; color: var(--ink-3); margin-top: 16px; line-height: 1.6; }
+
+/* ----- Metrics ----- */
+.metrics-tiles {
+  display: flex; gap: 0; margin-top: 26px; border: 1px solid var(--rule);
+}
+.metric-tile { flex: 1; padding: 18px 22px; border-right: 1px solid var(--rule); }
+.metric-tile:last-child { border-right: none; }
+.metric-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink-3); }
+.metric-value { font-family: var(--serif); font-size: 26px; font-weight: 400;
+  color: var(--ink); margin-top: 6px; letter-spacing: -0.01em; }
+.metrics-charts { display: flex; gap: 32px; margin-top: 28px; flex-wrap: wrap; }
+.metric-chart { min-width: 220px; }
+.metric-chart-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--ink-3); margin-bottom: 8px; }
+.sparkline { display: block; }
+.metrics-empty { font-family: var(--serif); font-size: 15px; color: var(--ink-3);
+  text-align: center; padding: 60px 0; }
+.metrics-stale { color: var(--accent); }

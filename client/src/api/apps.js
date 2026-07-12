@@ -111,6 +111,14 @@ export const getAppFiles = async (id) => {
 }
 
 /**
+ * Get an application's resource-metrics history (resource samples, newest last).
+ */
+export const getAppMetrics = async (id) => {
+  const response = await api.get(`/apps/${id}/metrics`)
+  return response.data.data
+}
+
+/**
  * Get an application's environment variables
  */
 export const getAppEnv = async (id) => {

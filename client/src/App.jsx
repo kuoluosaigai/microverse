@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import CreateApp from './pages/CreateApp'
 import UploadFiles from './pages/UploadFiles'
 import AppLogs from './pages/AppLogs'
+import AppMetrics from './pages/AppMetrics'
 
 const theme = {
   token: {
@@ -42,6 +43,7 @@ function App() {
         <Route path="/create" element={<CreateApp />} />
         <Route path="/apps/:id/upload" element={<UploadFiles />} />
         <Route path="/apps/:id/logs" element={<AppLogs />} />
+        <Route path="/apps/:id/metrics" element={<AppMetrics />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ConfigProvider>

@@ -74,6 +74,7 @@
     "more": "More",
     "viewDirectory": "View Deployment Directory",
     "logs": "Logs",
+    "metrics": "Metrics",
     "env": "Environment",
     "starting": "Starting…",
     "clickToOpen": "Click to open app",
@@ -106,6 +107,16 @@
     "retry": "Retry",
     "jumpLatest": "Jump to latest ↓",
     "loadError": "Failed to load application"
+  },
+  "appMetrics": {
+    "title": "Metrics",
+    "lead": "Resource usage — sampled every 10s",
+    "cpu": "CPU",
+    "memory": "Memory",
+    "uptime": "Uptime",
+    "empty": "No data yet — start the app and samples will appear here.",
+    "stale": "data not updating",
+    "loadError": "Failed to load app"
   },
   "appEnv": {
     "title": "Environment",
