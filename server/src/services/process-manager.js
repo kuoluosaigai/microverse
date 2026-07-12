@@ -223,30 +223,45 @@ class ProcessManager {
   }
 
   /**
-   * Get process status
+   * Get status for ALL PM2 processes in one `pm2 jlist` call.
+   * Used by MetricsSampler (one call per tick covers every app).
+   * @returns {Promise<Array<{name:string,status:string,pid:number,uptime:number,memory:number,cpu:number}>>}
+   */
+  static async getAllProcessStatus() {
+    try {
+      const { stdout } = await execPromise('pm2 jlist');
+      const processes = JSON.parse(stdout);
+      return processes.map(p => ({
+        name: p.name,
+        status: p.pm2_env.status,
+        pid: p.pid,
+        uptime: p.pm2_env.pm_uptime,
+        memory: p.monit.memory,
+        cpu: p.monit.cpu
+      }));
+    } catch (error) {
+      throw new Error(`Failed to list PM2 processes: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get process status for a single app by name. Delegates to getAllProcessStatus.
+   * @returns {Promise<{exists:false}|{exists:true,status,pid,uptime,memory,cpu}>}
    */
   static async getProcessStatus(appName) {
-    try {
-      const { stdout } = await execPromise(`pm2 jlist`);
-      const processes = JSON.parse(stdout);
-
-      const process = processes.find(p => p.name === appName);
-
-      if (!process) {
-        return { exists: false };
-      }
-
-      return {
-        exists: true,
-        status: process.pm2_env.status,
-        pid: process.pid,
-        uptime: process.pm2_env.pm_uptime,
-        memory: process.monit.memory,
-        cpu: process.monit.cpu
-      };
-    } catch (error) {
-      throw new Error(`Failed to get process status: ${error.message}`);
+    const all = await this.getAllProcessStatus();
+    const p = all.find(x => x.name === appName);
+    if (!p) {
+      return { exists: false };
     }
+    return {
+      exists: true,
+      status: p.status,
+      pid: p.pid,
+      uptime: p.uptime,
+      memory: p.memory,
+      cpu: p.cpu
+    };
   }
 
   /**

@@ -47,7 +47,11 @@ const config = {
     npmBuildTimeoutMs: parseInt(process.env.NPM_BUILD_TIMEOUT_MS) || 300000,
 
     // nginx binary path (default 'nginx' = PATH; set NGINX_BIN for non-PATH installs)
-    nginxBin: process.env.NGINX_BIN || 'nginx'
+    nginxBin: process.env.NGINX_BIN || 'nginx',
+
+    // metrics sampler (resource monitoring): PM2 poll interval + ring-buffer cap
+    metricsIntervalMs: parseInt(process.env.METRICS_INTERVAL_MS) || 10000,
+    metricsMaxSamples: parseInt(process.env.METRICS_MAX_SAMPLES) || 180
   },
 
   // PM2 configuration
