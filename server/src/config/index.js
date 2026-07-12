@@ -44,7 +44,10 @@ const config = {
 
     // npm install / build timeouts (ms)
     npmInstallTimeoutMs: parseInt(process.env.NPM_INSTALL_TIMEOUT_MS) || 300000,
-    npmBuildTimeoutMs: parseInt(process.env.NPM_BUILD_TIMEOUT_MS) || 300000
+    npmBuildTimeoutMs: parseInt(process.env.NPM_BUILD_TIMEOUT_MS) || 300000,
+
+    // nginx binary path (default 'nginx' = PATH; set NGINX_BIN for non-PATH installs)
+    nginxBin: process.env.NGINX_BIN || 'nginx'
   },
 
   // PM2 configuration
