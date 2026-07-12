@@ -15,18 +15,24 @@ function Dashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [startingId, setStartingId] = useState(null)
 
-  const loadApps = async (showRefreshing = false) => {
+  const loadApps = async (showRefreshing = false, silent = false) => {
     try {
-      if (showRefreshing) setRefreshing(true)
-      else setLoading(true)
+      if (!silent) {
+        if (showRefreshing) setRefreshing(true)
+        else setLoading(true)
+      }
       const data = await getAllApps()
       setApps(data)
     } catch (error) {
-      message.error(t('messages.operationFailed'))
+      if (!silent) {
+        message.error(t('messages.operationFailed'))
+      }
       console.error('Error loading apps:', error)
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (!silent) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }
 
@@ -37,7 +43,7 @@ function Dashboard() {
 
   // Silent background refresh every 10s (no spinner; just updates app data incl. metrics).
   useEffect(() => {
-    const timer = setInterval(() => loadApps(false), 10000)
+    const timer = setInterval(() => loadApps(false, true), 10000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
