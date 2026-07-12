@@ -91,6 +91,8 @@ const queries = {
   // Apps queries
   getAllApps: () => dbAll('SELECT * FROM apps ORDER BY created_at DESC'),
 
+  getAllClaimedPorts: () => dbAll('SELECT port FROM apps WHERE port IS NOT NULL'),
+
   getAppById: (id) => dbGet('SELECT * FROM apps WHERE id = ?', [id]),
 
   getAppByName: (name) => dbGet('SELECT * FROM apps WHERE name = ?', [name]),
