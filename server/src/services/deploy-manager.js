@@ -28,11 +28,14 @@ class DeployManager {
     }
 
     // Assign port if needed — both http-server and npm get a platform port.
-    // npm apps receive it via the PORT env var (resolved below).
+    // npm apps receive it via the PORT env var (resolved below). Exclude ports
+    // already claimed by other apps so two apps never share a port.
     if (!app.port) {
+      const claimed = (await queries.getAllClaimedPorts()).map(r => r.port);
       const port = await ProcessManager.findAvailablePort(
         config.deployment.portRangeMin,
-        config.deployment.portRangeMax
+        config.deployment.portRangeMax,
+        { exclude: claimed }
       );
       await AppManager.updateApp(appId, { port });
       app.port = port;
