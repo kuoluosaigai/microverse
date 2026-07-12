@@ -121,11 +121,11 @@
 - [ ] SSL 证书管理（后续迭代）
 - [ ] 域名绑定（后续迭代）
 
-### 🎯 Phase 13: 应用监控 (优先级: 低)
-- [ ] CPU/内存使用监控
-- [ ] 请求统计
-- [ ] 错误率监控
-- [ ] 告警系统
+### ✅ Phase 13: 应用监控（资源监控部分，2026-07-12）
+- [x] CPU/内存/运行时长监控（`MetricsSampler` 10s 采样 + 内存环形缓冲；Dashboard 行内当前值 + 独立 Metrics 页火花线）
+- [ ] 请求统计（需反向代理网关层）
+- [ ] 错误率监控（需网关层或平台 API 中间件）
+- [ ] 告警系统（需阈值规则 + 通知渠道）
 
 ### 🎯 Phase 14: 用户系统 (优先级: 低)
 - [ ] 用户注册/登录
@@ -191,7 +191,7 @@
 
 **中期目标**:
 1. ✅ Nginx 支持 (Phase 12，静态站部分)
-2. 应用监控仪表盘 (Phase 13)
+2. ✅ 应用监控仪表盘 (Phase 13，资源监控部分)
 3. 性能优化
 
 **长期目标**:
@@ -209,6 +209,7 @@
 
 ### [Unreleased] — 2026-07-12
 #### 新增
+- Phase 13（资源监控部分）：新增 `MetricsSampler`（开机启动，10s/tick 单次 `pm2 jlist`，内存环形缓冲 180 样本）；`ProcessManager.getAllProcessStatus` 抽取；`GET /api/apps` 附带 `metrics` + 新 `GET /api/apps/:id/metrics`；前端独立 Metrics 页（数值卡 + 手写 SVG 火花线）+ Dashboard 行内 CPU/内存 + 10s 自动刷新。请求/错误/告警待后续迭代。
 - Phase 12（静态站部分）：`nginx` 部署类型落地——新增 `NginxLifecycle` 服务（配置生成 + `nginx -t` 预检 + 启动探针），`ProcessManager` 以 `interpreter:'none'` + `daemon off;` 经 PM2 托管 nginx；`NGINX_BIN` 配置；前端 Select 启用 nginx。SSL / 反向代理 / 域名仍待后续迭代。
 - Phase 11：npm 应用 start 时自动 `npm install` + 可选 `npm run build`；新增 `NpmLifecycle` 服务
 - 环境变量管理：`app_env` 表 + `GET/PUT /api/apps/:id/env` + 前端 `EnvModal` 组件
