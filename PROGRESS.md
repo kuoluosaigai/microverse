@@ -93,7 +93,7 @@
 
 - ✅ **Static Site (http-server)** - 完全可用（自动端口分配、PM2 进程管理、启停）
 - ✅ **Node.js (npm)** - 完全可用（start 时自动 `npm install` + 可选 `npm run build`；平台分配端口并注入 `PORT`；可配置环境变量）
-- ❌ **Nginx** - 未实现（schema 中保留占位，前端 Select 中禁用）
+- ✅ **Nginx** - 静态站可用（作为 PM2 进程 serve app 目录；需本机安装 nginx 并经 `NGINX_BIN` 或 PATH 提供）。反向代理 / SSL / 域名待后续迭代。
 
 ## 待实现功能
 
@@ -114,11 +114,12 @@
 - [x] 环境变量管理（`app_env` 表 + GET/PUT API + EnvModal UI + PM2 注入）
 - [x] 平台为 npm 应用分配端口并注入 `PORT`
 
-### 🎯 Phase 12: Nginx 部署支持 (优先级: 低)
-- [ ] Nginx 配置文件生成
-- [ ] 反向代理设置
-- [ ] SSL 证书管理
-- [ ] 域名绑定
+### ✅ Phase 12: Nginx 部署支持（静态站部分，2026-07-12）
+- [x] Nginx 配置文件生成（静态站 server 块，pid/log 重定向到 app 目录）
+- [x] nginx 作为 PM2 进程提供静态站服务（复用端口分配 / 启停 / 日志 / 同步）
+- [ ] 反向代理设置（网关层，后续迭代）
+- [ ] SSL 证书管理（后续迭代）
+- [ ] 域名绑定（后续迭代）
 
 ### 🎯 Phase 13: 应用监控 (优先级: 低)
 - [ ] CPU/内存使用监控
@@ -153,6 +154,7 @@
 - [ ] `MAX_FILE_SIZE` 默认值在 config 与 .env.example 间需保持同步
 - [ ] 端口探测的 Windows 双栈盲区：`isPortAvailable` 能检出 IPv4-only（`0.0.0.0`）与 IPv6-only（`::`）监听器，但检不出"双栈 `::`（未设 `ipv6Only`）"的监听器——Windows 的 SO_REUSEADDR 允许异栈 socket 并存绑定。对平台托管的 app 无影响（DB 的 `getAllClaimedPorts` exclude 是兜底），仅影响"DB 外的双栈外部进程"。根治需 `SO_EXCLUSIVEADDRUSE` 或查 OS 端口表。
 - [ ] 并发 `deployApp` 的 TOCTOU：两个无端口 app 同时 start 可能读到同一 claimed 集合、选到同一端口（`deploy-manager.js` deployApp）。概率低（用户驱动 + PM2 启动慢）。可用 `UPDATE apps SET port=? WHERE id=? AND port IS NULL` 或进程内锁解决。
+- [ ] nginx app 的 SSE 日志页只能看到启动/致命错误（进 PM2 stderr）；nginx 运行时 access/error 写到 `<app>/nginx-*.log`，未接入 `LogManager`。后续让 LogManager 对 nginx app 改 tail 这些文件。
 
 ### 💡 改进建议
 - [ ] 添加 TypeScript 支持
@@ -188,7 +190,7 @@
 2. ✅ 添加 API 文档 (Swagger)
 
 **中期目标**:
-1. Nginx 支持 (Phase 12)
+1. ✅ Nginx 支持 (Phase 12，静态站部分)
 2. 应用监控仪表盘 (Phase 13)
 3. 性能优化
 
@@ -207,6 +209,7 @@
 
 ### [Unreleased] — 2026-07-12
 #### 新增
+- Phase 12（静态站部分）：`nginx` 部署类型落地——新增 `NginxLifecycle` 服务（配置生成 + `nginx -t` 预检 + 启动探针），`ProcessManager` 以 `interpreter:'none'` + `daemon off;` 经 PM2 托管 nginx；`NGINX_BIN` 配置；前端 Select 启用 nginx。SSL / 反向代理 / 域名仍待后续迭代。
 - Phase 11：npm 应用 start 时自动 `npm install` + 可选 `npm run build`；新增 `NpmLifecycle` 服务
 - 环境变量管理：`app_env` 表 + `GET/PUT /api/apps/:id/env` + 前端 `EnvModal` 组件
 - 平台为 npm 应用分配端口并注入 `PORT`；npm 应用在 Dashboard 出现可点击端口 chip

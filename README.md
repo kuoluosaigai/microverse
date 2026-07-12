@@ -11,7 +11,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - 🚀 **Multiple Deploy Options**:
   - `http-server` — for static sites (requires `index.html`)
   - `npm` — for Node.js applications (requires `package.json` with a `start` script; auto-runs `npm install` + optional `npm run build` on start; platform assigns a port and injects `PORT` + your env vars)
-  - `nginx` — placeholder (not yet implemented)
+  - `nginx` — for static sites served by nginx (requires nginx installed; set `NGINX_BIN` if not on `PATH`)
 - 🔗 **Central Dashboard**: View and access every deployed application from one place
 - ⚙️ **Port Management**: Automatic port allocation in a configurable range (3000–9000 by default)
 - 📊 **Status Sync**: `Live` / `Idle` status, reconciled with actual PM2 process state
@@ -112,7 +112,7 @@ npm run pm2:logs
 3. Select a deployment type:
    - **Static Site (http-server)**: For HTML/CSS/JS static websites
    - **Node.js (npm)**: For Node.js applications with a `package.json` `start` script (dependencies install and an optional build run automatically on start)
-   - **Nginx**: Coming soon
+   - **Nginx**: For static sites, served by nginx (install nginx separately; set `NGINX_BIN` if not on `PATH`)
 4. Submit — the app appears on the dashboard as `Idle`
 
 ### Uploading Files
@@ -222,6 +222,9 @@ MAX_FILES=100
 NPM_INSTALL_TIMEOUT_MS=300000
 NPM_BUILD_TIMEOUT_MS=300000
 
+# nginx binary path for the nginx deploy type (default 'nginx' = PATH)
+NGINX_BIN=nginx
+
 # PM2
 PM2_INSTANCE_NAME=microverse-server
 ```
@@ -236,6 +239,7 @@ Designed to work on both Windows and Linux:
 - **Environment variables**: `cross-env` for Windows-compatible scripts
 - **File operations**: `fs` APIs instead of shell commands
 - **PM2 + Windows**: PM2 fork mode can't launch `.cmd` wrappers (npm, http-server), so `ProcessManager` resolves the JS entry points (`http-server/bin/http-server`, `npm/bin/npm-cli.js`) and runs them with `interpreter: 'node'`
+- **nginx deploy type**: nginx is a system binary (not an npm package). Set `NGINX_BIN` (default `nginx`) to point at it; PM2 launches it with `interpreter: 'none'` and `daemon off;`. Per-app `pid`/`error_log`/`access_log` are redirected into the app directory so nginx doesn't need write access to its install prefix.
 - **Database**: uses the `sqlite3` package (not `better-sqlite3`, which has Windows compilation issues)
 
 ## Development
