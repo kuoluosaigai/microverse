@@ -129,13 +129,13 @@
 
 ### ✅ Phase 14: 用户系统（单管理员登录部分，2026-07-12）
 - [x] 单管理员登录（`users` 表 + bcryptjs + express-session；env 播种；requireAuth 罩住 `/api/apps*`；前端登录页 + 路由守卫 + 登出）
-- [ ] 多用户 / 注册（按需；users 表已在）
-- [ ] JWT / 细粒度权限（按需）
-- [ ] 多用户应用隔离（需 owner 列 + 每查询过滤；按需）
+- [ ] ~~多用户 / 注册~~（不做——单管理员即完整范围）
+- [ ] ~~JWT / 细粒度权限~~（不做）
+- [ ] ~~多用户应用隔离~~（不做）
 
 ### 🎯 Phase 15: 优化和增强 (优先级: 低)
 - [ ] 数据库迁移系统
-- [ ] 应用备份和恢复
+- [x] 应用备份和恢复（per-app zip 导出/导入；manifest 含 name/deploy_type/env；恢复同名报 400、失败回滚）
 - [ ] 批量操作支持
 - [ ] 应用模板系统
 - [ ] 命令行工具 (CLI)
@@ -209,6 +209,7 @@
 
 ### [Unreleased] — 2026-07-12
 #### 新增
+- Phase 15（部分）：per-app 备份/恢复——`BackupManager`（zip 导出含 `microverse-manifest.json` + `files/`；恢复先校验再建、失败回滚、同名报 400）+ `GET /api/apps/:id/backup` + `POST /api/apps/restore`；前端 AppRow Backup 下载按钮 + Dashboard Restore 入口。
 - Phase 14（单管理员登录部分）：新增 `users` 表 + `AuthManager`（ensureAdmin env 播种 + bcryptjs 校验）+ `express-session`（httpOnly、sameSite=lax）+ `requireAuth` 中间件（罩住 `/api/apps*`，公开 `/health` `/config` `/auth/login`）+ `POST /api/auth/login` `POST /auth/logout` `GET /auth/me`；前端 `AuthContext` + 登录页 + `RequireAuth` 路由守卫 + EditorialShell 登出。多用户/JWT/多租户待后续按需。
 - Phase 13（资源监控部分）：新增 `MetricsSampler`（开机启动，10s/tick 单次 `pm2 jlist`，内存环形缓冲 180 样本）；`ProcessManager.getAllProcessStatus` 抽取；`GET /api/apps` 附带 `metrics` + 新 `GET /api/apps/:id/metrics`；前端独立 Metrics 页（数值卡 + 手写 SVG 火花线）+ Dashboard 行内 CPU/内存 + 10s 自动刷新。请求/错误/告警待后续迭代。
 - Phase 12（静态站部分）：`nginx` 部署类型落地——新增 `NginxLifecycle` 服务（配置生成 + `nginx -t` 预检 + 启动探针），`ProcessManager` 以 `interpreter:'none'` + `daemon off;` 经 PM2 托管 nginx；`NGINX_BIN` 配置；前端 Select 启用 nginx。SSL / 反向代理 / 域名仍待后续迭代。
