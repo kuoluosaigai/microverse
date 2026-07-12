@@ -37,7 +37,7 @@
     "deployTypeRequired": "请选择部署类型",
     "staticSite": "静态网站 (http-server)",
     "nodeApp": "Node.js 应用 (npm)",
-    "nginx": "Nginx (即将推出)",
+    "nginx": "Nginx (静态站)",
     "helpText": "创建应用后，您需要先上传文件才能部署。",
     "createButton": "创建应用",
     "successMessage": "应用创建成功",

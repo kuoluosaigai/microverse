@@ -61,7 +61,7 @@ function CreateApp() {
           <Select>
             <Option value="http-server">{t('createApp.staticSite')}</Option>
             <Option value="npm">{t('createApp.nodeApp')}</Option>
-            <Option value="nginx" disabled>{t('createApp.nginx')}</Option>
+            <Option value="nginx">{t('createApp.nginx')}</Option>
           </Select>
         </Form.Item>
 

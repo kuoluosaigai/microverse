@@ -37,7 +37,7 @@
     "deployTypeRequired": "Please select a deployment type",
     "staticSite": "Static Site (http-server)",
     "nodeApp": "Node.js Application (npm)",
-    "nginx": "Nginx (Coming Soon)",
+    "nginx": "Nginx (Static Site)",
     "helpText": "After creating the app, you'll need to upload your files before deploying.",
     "createButton": "Create Application",
     "successMessage": "Application created successfully",
