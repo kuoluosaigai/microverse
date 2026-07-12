@@ -234,8 +234,7 @@ class ProcessManager {
       const server = net.createServer();
       server.once('error', () => resolve(false));
       server.once('listening', () => {
-        server.close();
-        resolve(true);
+        server.close(() => resolve(true));
       });
       if (ipv6Only) {
         server.listen({ port, host, ipv6Only: true });
@@ -262,7 +261,7 @@ class ProcessManager {
    * not excluded AND free on both stacks.
    */
   static async findAvailablePort(minPort, maxPort, options = {}) {
-    const exclude = new Set(Array.isArray(options.exclude) ? options.exclude : []);
+    const exclude = new Set(options.exclude || []);
     for (let port = minPort; port <= maxPort; port++) {
       if (exclude.has(port)) continue;
       if (await this.isPortAvailable(port)) {
