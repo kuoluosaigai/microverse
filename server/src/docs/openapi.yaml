@@ -8,6 +8,8 @@ info:
 
     All responses use the envelope:
     `{ success: boolean, data?: <T>, error?: { message: string } }`.
+
+    All `/apps` endpoints require an authenticated admin session (`POST /api/auth/login`); missing/invalid session → HTTP 401.
   license:
     name: MIT
 servers:
@@ -16,6 +18,8 @@ servers:
 tags:
   - name: System
     description: Health and public configuration
+  - name: Auth
+    description: Admin login / logout / session
   - name: Applications
     description: Application CRUD
   - name: Lifecycle
@@ -55,6 +59,74 @@ paths:
                 properties:
                   success: { type: boolean, example: true }
                   data: { $ref: '#/components/schemas/ConfigData' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Authenticated; session cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          username: { type: string }
+        '400':
+          description: Missing username/password
+        '401':
+          description: Invalid credentials
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current session user
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          username: { type: string }
+        '401':
+          description: Not authenticated
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Destroy the admin session
+      responses:
+        '200':
+          description: Logged out
   /apps:
     get:
       tags: [Applications]

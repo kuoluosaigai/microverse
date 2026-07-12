@@ -7,6 +7,10 @@ const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
 const NginxLifecycle = require('./services/nginx-lifecycle');
 const metricsSampler = require('./services/metrics-sampler');
+const session = require('express-session');
+const crypto = require('crypto');
+const AuthManager = require('./services/auth-manager');
+const { dbReady } = require('./db');
 
 // Initialize database
 require('./db');
@@ -21,6 +25,19 @@ const app = express();
 app.use(cors(config.cors));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Session (admin auth). SESSION_SECRET falls back to a random ephemeral secret
+// (sessions then invalidate on every restart — set SESSION_SECRET in .env).
+const sessionSecret = config.auth.sessionSecret || crypto.randomBytes(32).toString('hex');
+if (!config.auth.sessionSecret) {
+  console.warn('⚠ SESSION_SECRET not set — using a random ephemeral secret (sessions invalidate on restart). Set SESSION_SECRET in .env for stable sessions.');
+}
+app.use(session({
+  secret: sessionSecret,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 } // 8h
+}));
 
 // Request logging in development
 if (config.server.nodeEnv === 'development') {
@@ -73,6 +90,9 @@ const server = app.listen(config.server.port, config.server.host, () => {
 
   // Start the resource-metrics sampler (10s default; decouples PM2 from requests).
   metricsSampler.start();
+
+  // Seed the admin user once the DB schema is ready.
+  dbReady.then(() => AuthManager.ensureAdmin()).catch(err => console.warn(`ensureAdmin failed: ${err.message}`));
 });
 
 // Graceful shutdown

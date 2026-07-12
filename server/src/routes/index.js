@@ -9,6 +9,8 @@ const fs = require('fs');
 const config = require('../config');
 const LogManager = require('../services/log-manager');
 const metricsSampler = require('../services/metrics-sampler');
+const AuthManager = require('../services/auth-manager');
+const { requireAuth } = require('../middleware/auth');
 
 /**
  * API Routes
@@ -38,6 +40,39 @@ router.get('/config', (req, res) => {
     }
   });
 });
+
+// Authenticate (public — must be registered BEFORE requireAuth)
+router.post('/auth/login', async (req, res, next) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'username and password are required' }
+      });
+    }
+    const user = await AuthManager.verifyCredentials(username, password);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: { message: 'Invalid credentials' }
+      });
+    }
+    // Regenerate the session to defeat session fixation, then stamp the user.
+    req.session.regenerate((err) => {
+      if (err) {
+        return res.status(500).json({ success: false, error: { message: 'Login failed' } });
+      }
+      req.session.user = user;
+      res.json({ success: true, data: { user } });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Everything below requires an authenticated session.
+router.use(requireAuth);
 
 // Get all applications (with latest resource metrics attached)
 router.get('/apps', async (req, res, next) => {
@@ -542,6 +577,22 @@ router.put('/apps/:id/env', async (req, res, next) => {
     }
     next(error);
   }
+});
+
+// Get the current session user (protected)
+router.get('/auth/me', (req, res) => {
+  res.json({ success: true, data: { user: req.session.user } });
+});
+
+// Log out (protected) — destroy the session + clear the cookie
+router.post('/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ success: false, error: { message: 'Logout failed' } });
+    }
+    res.clearCookie('connect.sid'); // express-session default cookie name
+    res.json({ success: true, data: { message: 'Logged out' } });
+  });
 });
 
 module.exports = router;
