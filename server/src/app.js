@@ -3,6 +3,8 @@ const cors = require('cors');
 const config = require('./config');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const routes = require('./routes');
+const swaggerUi = require('swagger-ui-express');
+const openApiSpec = require('./docs');
 
 // Initialize database
 require('./db');
@@ -29,6 +31,10 @@ if (config.server.nodeEnv === 'development') {
 // API routes
 app.use('/api', routes);
 
+// API documentation (Swagger UI) + raw OpenAPI spec
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
+app.get('/openapi.json', (req, res) => res.json(openApiSpec));
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
@@ -52,6 +58,7 @@ const server = app.listen(config.server.port, config.server.host, () => {
   console.log(`✓ Server running on http://${config.server.host}:${config.server.port}`);
   console.log(`✓ Environment: ${config.server.nodeEnv}`);
   console.log(`✓ API available at http://${config.server.host}:${config.server.port}/api`);
+  console.log(`✓ API docs (Swagger UI): http://${config.server.host}:${config.server.port}/api-docs`);
   console.log('');
   console.log('Press Ctrl+C to stop');
   console.log('');

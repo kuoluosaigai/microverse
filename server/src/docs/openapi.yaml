@@ -1,0 +1,481 @@
+openapi: 3.0.3
+info:
+  title: Microverse API
+  version: 1.0.0
+  description: |
+    Microverse — a cross-platform micro-application deployment platform.
+    Deploy and manage static sites (http-server) and Node.js (npm) apps via PM2.
+
+    All responses use the envelope:
+    `{ success: boolean, data?: <T>, error?: { message: string } }`.
+  license:
+    name: MIT
+servers:
+  - url: /api
+    description: API root (relative — works in dev and prod)
+tags:
+  - name: System
+    description: Health and public configuration
+  - name: Applications
+    description: Application CRUD
+  - name: Lifecycle
+    description: Start / stop / restart / sync
+  - name: Files & Env
+    description: File listing, upload, and environment variables
+  - name: Logs
+    description: Log streaming
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/HealthData' }
+  /config:
+    get:
+      tags: [System]
+      summary: Public client configuration (upload limits)
+      operationId: getConfig
+      responses:
+        '200':
+          description: Public config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ConfigData' }
+  /apps:
+    get:
+      tags: [Applications]
+      summary: List all applications
+      operationId: listApps
+      responses:
+        '200':
+          description: App list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/App' }
+    post:
+      tags: [Applications]
+      summary: Create a new application
+      operationId: createApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppCreateInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '400':
+          description: Missing fields / invalid deploy_type / name already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}:
+    get:
+      tags: [Applications]
+      summary: Get an application by ID
+      operationId: getApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: The application
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Applications]
+      summary: Delete an application (must be stopped first)
+      operationId: deleteApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      message: { type: string, example: "App deleted successfully" }
+        '400':
+          description: Cannot delete a running app
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/start:
+    post:
+      tags: [Lifecycle]
+      summary: Start an application (npm apps run install/build first)
+      operationId: startApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Started (running)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '400':
+          description: Already running, missing start script, npm install/build failure/timeout, invalid package.json
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/stop:
+    post:
+      tags: [Lifecycle]
+      summary: Stop a running application
+      operationId: stopApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '400':
+          description: App is not running
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/restart:
+    post:
+      tags: [Lifecycle]
+      summary: Restart a running application
+      operationId: restartApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Restarted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '400':
+          description: App is not running
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/sync:
+    post:
+      tags: [Lifecycle]
+      summary: Sync app status with the actual PM2 process state
+      operationId: syncApp
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Synced
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/files:
+    get:
+      tags: [Files & Env]
+      summary: List files in an application's deploy directory
+      operationId: listFiles
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: File list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/FileEntry' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/upload:
+    post:
+      tags: [Files & Env]
+      summary: Upload files (multipart). ZIPs auto-extract with zip-slip guard.
+      operationId: uploadFiles
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        '200':
+          description: Files uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/UploadResponse' }
+        '400':
+          description: No files / file too large / ZIP extraction failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/env:
+    get:
+      tags: [Files & Env]
+      summary: List an application's environment variables
+      operationId: getAppEnv
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Env entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EnvEntry' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [Files & Env]
+      summary: Replace an application's environment variables (applies on next start)
+      operationId: setAppEnv
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnvPutInput' }
+      responses:
+        '200':
+          description: Saved env entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/EnvEntry' }
+        '400':
+          description: Invalid key / duplicate key / env not an array
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/logs/stream:
+    get:
+      tags: [Logs]
+      summary: Stream an app's PM2 logs as SSE (recent history, then live)
+      operationId: streamLogs
+      parameters:
+        - { $ref: '#/components/parameters/AppId' }
+        - name: lines
+          in: query
+          required: false
+          schema: { type: integer, default: 100, maximum: 1000, minimum: 1 }
+          description: Number of history lines per stream
+      responses:
+        '200':
+          description: |
+            Server-Sent Events stream (`text/event-stream`). Events:
+            `history` — `{ lines: [{level, msg}] }` (out then err);
+            `line` — `{ level: "out"|"err", msg, ts }` (live);
+            `error` — `{ message }`.
+            A `: ping` comment is sent every 15s as keep-alive.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+components:
+  parameters:
+    AppId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+      description: Application ID
+  schemas:
+    App:
+      type: object
+      properties:
+        id: { type: integer, example: 7 }
+        name: { type: string, example: "my-app" }
+        path: { type: string, example: "/data/microverse/apps/my-app" }
+        deploy_type:
+          type: string
+          enum: [npm, http-server, nginx]
+          example: "npm"
+        port: { type: integer, nullable: true, example: 3000 }
+        status:
+          type: string
+          enum: [running, stopped]
+          example: "running"
+        created_at: { type: string, example: "2026-07-12 03:25:59" }
+        updated_at: { type: string, example: "2026-07-12 03:26:23" }
+    AppCreateInput:
+      type: object
+      required: [name, deploy_type]
+      properties:
+        name: { type: string, example: "my-app" }
+        deploy_type:
+          type: string
+          enum: [npm, http-server, nginx]
+          example: "npm"
+    EnvEntry:
+      type: object
+      required: [key]
+      properties:
+        key: { type: string, example: "API_KEY" }
+        value: { type: string, nullable: true, example: "secret123" }
+    EnvPutInput:
+      type: object
+      required: [env]
+      properties:
+        env:
+          type: array
+          items: { $ref: '#/components/schemas/EnvEntry' }
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error:
+          type: object
+          required: [message]
+          properties:
+            message: { type: string, example: "App not found" }
+    UploadResponse:
+      type: object
+      properties:
+        filesUploaded: { type: integer, example: 2 }
+        files:
+          type: array
+          items: { type: string }
+          example: ["index.html", "server.js"]
+    FileEntry:
+      type: object
+      properties:
+        name: { type: string, example: "index.html" }
+        type:
+          type: string
+          enum: [file, directory]
+          example: "file"
+    HealthData:
+      type: object
+      properties:
+        status: { type: string, example: "ok" }
+        timestamp: { type: string, format: date-time }
+        uptime: { type: number, example: 21.302 }
+    ConfigData:
+      type: object
+      properties:
+        upload:
+          type: object
+          properties:
+            maxFileSize: { type: integer, example: 104857600 }
+            maxFiles: { type: integer, example: 100 }
