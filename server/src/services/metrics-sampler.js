@@ -36,7 +36,11 @@ class MetricsSampler {
     try {
       const all = await ProcessManager.getAllProcessStatus();
       const ts = Date.now();
-      for (const p of all) {
+      // Only sample online processes: `pm2 stop` leaves a process in jlist with
+      // monit:{cpu:0,memory:0}, so sampling stopped apps would push misleading
+      // zero-samples + a growing uptime. Filtering freezes the buffer at the
+      // last good sample when an app stops.
+      for (const p of all.filter(x => x.status === 'online')) {
         const sample = {
           ts,
           cpu: p.cpu,
