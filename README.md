@@ -172,6 +172,8 @@ microverse/
 
 All endpoints return `{ success, data }` or `{ success: false, error: { message } }`.
 
+> Interactive API docs (Swagger UI): `http://localhost:5000/api-docs` — raw spec at `GET /openapi.json`.
+
 ### Applications
 - `GET /api/apps` - List all applications
 - `GET /api/apps/:id` - Get an application by ID

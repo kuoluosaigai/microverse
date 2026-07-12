@@ -185,7 +185,7 @@
 
 **短期目标**:
 1. 完善 npm 应用部署 (Phase 11) — 自动依赖安装 / 构建
-2. 添加 API 文档 (Swagger)
+2. ✅ 添加 API 文档 (Swagger)
 
 **中期目标**:
 1. Nginx 支持 (Phase 12)
@@ -213,6 +213,7 @@
 - npm `start` 脚本校验（缺脚本在 start 前 400 拒绝，不再崩溃后才暴露）
 - `ProcessManager.writeEcosystemConfig` 抽取，消除重复
 - start 请求关闭 axios 超时；Dashboard 增加 `startingId` 启动反馈态
+- Swagger / OpenAPI 文档：中央 `openapi.yaml`（3.0.3，15 端点 + 可复用 schema）+ `swagger-ui-express` 在 `/api-docs` 提供交互式 UI；`GET /openapi.json` 暴露原始 spec。
 #### 修复
 - 端口分配健壮性：`isPortAvailable` 改为 IPv4/IPv6 双栈探测（修复 Windows 下只探 IPv6、漏判 IPv4 占用导致的同端口并存）；`findAvailablePort` 新增 `exclude`，由 `DeployManager` 传入 DB 已占用端口集合（`getAllClaimedPorts`），杜绝把一个 app 的端口分给另一个 app。
 #### 补登（2026-07-09 之后、此前未入账）
