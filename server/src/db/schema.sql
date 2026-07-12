@@ -37,3 +37,11 @@ CREATE TABLE IF NOT EXISTS app_env (
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_env_app_id ON app_env(app_id);
+
+-- Admin user(s) for the admin login (single-admin in v1)
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

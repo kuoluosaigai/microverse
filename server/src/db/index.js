@@ -80,8 +80,9 @@ async function initDatabase() {
   }
 }
 
-// Initialize on module load
-initDatabase().catch(err => {
+// Initialize on module load; expose the promise so callers (e.g. AuthManager
+// seeding at boot) can await schema readiness before querying.
+const dbReady = initDatabase().catch(err => {
   console.error('Failed to initialize database:', err);
   process.exit(1);
 });
@@ -145,10 +146,21 @@ const queries = {
       throw err;
     }
     return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
-  }
+  },
+
+  // User queries (admin auth)
+  getUserCount: () => dbGet('SELECT COUNT(*) AS count FROM users'),
+
+  getUserByUsername: (username) => dbGet('SELECT * FROM users WHERE username = ?', [username]),
+
+  createUser: (username, passwordHash) => dbRun(
+    'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+    [username, passwordHash]
+  )
 };
 
 module.exports = {
   db,
-  queries
+  queries,
+  dbReady
 };

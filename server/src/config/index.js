@@ -57,6 +57,13 @@ const config = {
   // PM2 configuration
   pm2: {
     instanceName: process.env.PM2_INSTANCE_NAME || 'microverse-server'
+  },
+
+  // Auth (single admin login)
+  auth: {
+    adminUsername: process.env.ADMIN_USERNAME || 'admin',
+    adminPassword: process.env.ADMIN_PASSWORD || '',
+    sessionSecret: process.env.SESSION_SECRET || ''
   }
 };
 
