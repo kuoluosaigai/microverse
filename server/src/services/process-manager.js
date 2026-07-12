@@ -3,6 +3,7 @@ const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const NginxLifecycle = require('./nginx-lifecycle');
 
 const execPromise = util.promisify(exec);
 
@@ -149,8 +150,32 @@ class ProcessManager {
           throw new Error(`Failed to start process: ${error.message}`);
         }
 
-      case 'nginx':
-        throw new Error('Nginx deployment not yet implemented');
+      case 'nginx': {
+        // Launch nginx as a PM2-managed process. nginx is a native binary (not a
+        // JS entry / .cmd wrapper), so interpreter:'none' execs it directly — no
+        // Windows PM2-fork-.cmd problem. `daemon off;` keeps the master in the
+        // foreground so PM2 can track/restart/collect stderr.
+        if (!port) {
+          throw new Error('Port is required for nginx deployment');
+        }
+        if (!options.nginxConf) {
+          throw new Error('nginx config path is required (options.nginxConf)');
+        }
+        const appsEntry = {
+          name: name,
+          script: NginxLifecycle.resolveBinary(),
+          args: ['-c', options.nginxConf, '-g', 'daemon off;'],
+          cwd: appPath,
+          interpreter: 'none',
+          exec_mode: 'fork',
+          autorestart: true,
+          max_restarts: 10,
+          min_uptime: 1000
+        };
+        const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
+        await execPromise(`pm2 start "${configPath}"`);
+        return { success: true, message: `Process ${name} started` };
+      }
 
       default:
         throw new Error(`Unknown deploy type: ${deploy_type}`);

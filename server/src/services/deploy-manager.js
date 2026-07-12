@@ -1,6 +1,7 @@
 const AppManager = require('./app-manager');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
+const NginxLifecycle = require('./nginx-lifecycle');
 const { queries } = require('../db');
 const config = require('../config');
 
@@ -27,7 +28,7 @@ class DeployManager {
       throw new Error('App is already running');
     }
 
-    // Assign port if needed — both http-server and npm get a platform port.
+    // Assign port if needed — http-server, nginx, and npm all get a platform port.
     // npm apps receive it via the PORT env var (resolved below). Exclude ports
     // already claimed by other apps so two apps never share a port.
     if (!app.port) {
@@ -42,11 +43,20 @@ class DeployManager {
     }
 
     // Start the process. For npm: install → build → resolve env → launch with env.
+    // For nginx: generate the per-app config and pre-flight it (binary present +
+    // config valid) before launch, so failures surface as clean 400s.
     if (app.deploy_type === 'npm') {
       await NpmLifecycle.install(app.path);
       await NpmLifecycle.build(app.path);
       const env = await NpmLifecycle.resolveEnv(appId, app.port);
       await ProcessManager.startProcess(app, { env });
+    } else if (app.deploy_type === 'nginx') {
+      const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
+      const result = await NginxLifecycle.testConfig(confPath);
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+      await ProcessManager.startProcess(app, { nginxConf: confPath });
     } else {
       await ProcessManager.startProcess(app);
     }

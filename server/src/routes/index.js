@@ -148,6 +148,8 @@ router.post('/apps/:id/start', async (req, res, next) => {
     // deterministic client-side failures, not server faults.
     const isClientError =
       error.message.includes('already running') ||
+      error.message.includes('nginx binary not found') ||
+      error.message.includes('nginx config invalid') ||
       error.message.includes('Missing') ||
       error.message.includes('empty') ||
       error.message.includes('npm install failed') ||

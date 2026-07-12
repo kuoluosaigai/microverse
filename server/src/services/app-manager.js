@@ -193,7 +193,9 @@ class AppManager {
         break;
 
       case 'nginx':
-        // For nginx, just check if there are any files
+        if (!files.includes('index.html')) {
+          return { valid: false, message: 'Missing index.html for nginx deployment' };
+        }
         break;
     }
 

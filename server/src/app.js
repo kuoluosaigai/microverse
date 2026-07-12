@@ -5,6 +5,7 @@ const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const routes = require('./routes');
 const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
+const NginxLifecycle = require('./services/nginx-lifecycle');
 
 // Initialize database
 require('./db');
@@ -62,6 +63,12 @@ const server = app.listen(config.server.port, config.server.host, () => {
   console.log('');
   console.log('Press Ctrl+C to stop');
   console.log('');
+
+  // Warn (don't block) if the nginx binary is unavailable — only the nginx
+  // deploy type needs it; http-server/npm apps work without it.
+  NginxLifecycle.probe().then(({ ok, message }) => {
+    if (!ok) console.warn('⚠ ' + message);
+  });
 });
 
 // Graceful shutdown

@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: |
     Microverse — a cross-platform micro-application deployment platform.
-    Deploy and manage static sites (http-server) and Node.js (npm) apps via PM2.
+    Deploy and manage static sites (http-server, nginx) and Node.js (npm) apps via PM2.
 
     All responses use the envelope:
     `{ success: boolean, data?: <T>, error?: { message: string } }`.
