@@ -465,6 +465,7 @@ components:
           type: string
           enum: [file, directory]
           example: "file"
+        path: { type: string, example: "/data/microverse/apps/my-app/index.html" }
     HealthData:
       type: object
       properties:
