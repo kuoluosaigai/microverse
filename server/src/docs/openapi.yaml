@@ -378,6 +378,49 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/backup:
+    get:
+      tags: [Applications]
+      operationId: backupApp
+      summary: Download a backup zip of an app
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Backup zip (files + microverse-manifest.json)
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '404':
+          description: App not found
+  /apps/restore:
+    post:
+      tags: [Applications]
+      operationId: restoreApp
+      summary: Restore an app from a backup zip
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: App restored (status stopped)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '400':
+          description: Invalid backup / name conflict / missing file
   /apps/{id}/upload:
     post:
       tags: [Files & Env]

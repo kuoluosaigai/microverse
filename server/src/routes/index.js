@@ -9,6 +9,8 @@ const fs = require('fs');
 const config = require('../config');
 const LogManager = require('../services/log-manager');
 const metricsSampler = require('../services/metrics-sampler');
+const BackupManager = require('../services/backup-manager');
+const { restoreUpload } = require('../middleware/upload');
 const AuthManager = require('../services/auth-manager');
 const { requireAuth } = require('../middleware/auth');
 
@@ -127,6 +129,47 @@ router.get('/apps/:id/metrics', async (req, res, next) => {
     }
     next(error);
   }
+});
+
+// Download a backup zip of an app (files + manifest)
+router.get('/apps/:id/backup', async (req, res, next) => {
+  try {
+    const app = await AppManager.getAppById(req.params.id);
+    const { buffer, filename } = await BackupManager.createBackup(app);
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}"`
+    });
+    res.send(buffer);
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+// Restore an app from a backup zip (multipart field 'file')
+router.post('/apps/restore', (req, res, next) => {
+  restoreUpload(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ success: false, error: { message: err.message } });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: { message: 'No backup file provided' } });
+    }
+    try {
+      const app = await BackupManager.restoreBackup(req.file.buffer);
+      res.status(201).json({ success: true, data: app });
+    } catch (error) {
+      const isClientError = ['Invalid backup file', 'Invalid app name', 'Invalid deploy_type', 'already exists']
+        .some(s => error.message.includes(s));
+      if (isClientError) {
+        return res.status(400).json({ success: false, error: { message: error.message } });
+      }
+      next(error);
+    }
+  });
 });
 
 // Create new application
