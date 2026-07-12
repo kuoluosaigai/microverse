@@ -146,7 +146,7 @@
 
 ### ⚠️ 技术债
 - [ ] 缺少单元测试 / 集成测试（目前仅手动测试）
-- [ ] API 文档可用 Swagger/OpenAPI 规范化
+- [x] API 文档可用 Swagger/OpenAPI 规范化（openapi.yaml + swagger-ui-express @ /api-docs）
 - [ ] 前端缺少错误边界 (Error Boundary)
 - [ ] 需要添加请求限流
 - [ ] 输入验证、SQL 注入防护等安全性增强
