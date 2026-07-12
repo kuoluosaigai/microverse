@@ -36,19 +36,26 @@ class NginxLifecycle {
    */
   static generateConfig(appPath, name, port) {
     const confPath = path.join(appPath, `nginx.${name}.conf`);
+    // nginx's double-quoted strings process backslash escapes (\n, \t, \u…), and
+    // a Windows appPath is full of backslashes — so e.g. ...\apps\node-api would
+    // have its \n turned into a newline, corrupting the config. Forward slashes
+    // are accepted by nginx on all platforms and carry no escape risk; normalize
+    // the paths interpolated into the config body (confPath itself stays
+    // OS-native for the filesystem write).
+    const p = appPath.replace(/\\/g, '/');
     const conf = `worker_processes  1;
-error_log  "${appPath}/nginx-error.log"  warn;
-pid        "${appPath}/nginx.pid";
+error_log  "${p}/nginx-error.log"  warn;
+pid        "${p}/nginx.pid";
 
 events { worker_connections 1024; }
 
 http {
-  access_log  "${appPath}/nginx-access.log";
+  access_log  "${p}/nginx-access.log";
 
   server {
     listen ${port};
     server_name _;
-    root   "${appPath}";
+    root   "${p}";
     index  index.html;
 
     location / {
