@@ -16,6 +16,18 @@
     "error": "Error",
     "warning": "Warning"
   },
+  "auth": {
+    "loginTitle": "Sign in",
+    "loginLead": "Admin sign-in to manage apps",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "usernameRequired": "Enter your username",
+    "passwordRequired": "Enter your password",
+    "loginSuccess": "Signed in",
+    "loginError": "Sign-in failed",
+    "logout": "Sign out"
+  },
   "dashboard": {
     "title": "Applications Dashboard",
     "createApp": "New app",

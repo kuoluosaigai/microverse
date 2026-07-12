@@ -16,6 +16,18 @@
     "error": "错误",
     "warning": "警告"
   },
+  "auth": {
+    "loginTitle": "登录",
+    "loginLead": "管理员登录以管理应用",
+    "username": "用户名",
+    "password": "密码",
+    "submit": "登录",
+    "usernameRequired": "请输入用户名",
+    "passwordRequired": "请输入密码",
+    "loginSuccess": "登录成功",
+    "loginError": "登录失败",
+    "logout": "登出"
+  },
   "dashboard": {
     "title": "应用仪表板",
     "createApp": "新建应用",
