@@ -143,7 +143,20 @@ router.post('/apps/:id/start', async (req, res, next) => {
         error: { message: error.message }
       });
     }
-    if (error.message.includes('already running') || error.message.includes('Missing') || error.message.includes('empty')) {
+    // Expected deployment failures (bad app input) -> 400. Covers validation
+    // messages plus NpmLifecycle errors (install/build/package.json), which are
+    // deterministic client-side failures, not server faults.
+    const isClientError =
+      error.message.includes('already running') ||
+      error.message.includes('Missing') ||
+      error.message.includes('empty') ||
+      error.message.includes('npm install failed') ||
+      error.message.includes('npm install timed out') ||
+      error.message.includes('build failed') ||
+      error.message.includes('npm run build timed out') ||
+      error.message.includes('package.json not found') ||
+      error.message.includes('Invalid package.json');
+    if (isClientError) {
       return res.status(400).json({
         success: false,
         error: { message: error.message }
