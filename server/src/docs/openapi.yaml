@@ -272,6 +272,40 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/metrics:
+    get:
+      tags: [Applications]
+      summary: Get an app's resource-metrics history
+      description: Returns the in-memory ring buffer of recent CPU/memory samples (default last 30 min, 10s interval).
+      operationId: getAppMetrics
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Sample array (newest last)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts: { type: integer }
+                        cpu: { type: number }
+                        memory: { type: integer }
+                        uptimeMs: { type: integer }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /apps/{id}/upload:
     post:
       tags: [Files & Env]
@@ -416,6 +450,15 @@ components:
           type: string
           enum: [running, stopped]
           example: "running"
+        metrics:
+          type: object
+          nullable: true
+          description: Latest resource sample (null if the app has never run / sampler has no data).
+          properties:
+            ts: { type: integer, description: "epoch ms" }
+            cpu: { type: number, description: "CPU %" }
+            memory: { type: integer, description: "bytes" }
+            uptimeMs: { type: integer, description: "uptime in ms" }
         created_at: { type: string, example: "2026-07-12 03:25:59" }
         updated_at: { type: string, example: "2026-07-12 03:26:23" }
     AppCreateInput:

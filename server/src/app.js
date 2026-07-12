@@ -6,6 +6,7 @@ const routes = require('./routes');
 const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
 const NginxLifecycle = require('./services/nginx-lifecycle');
+const metricsSampler = require('./services/metrics-sampler');
 
 // Initialize database
 require('./db');
@@ -69,10 +70,14 @@ const server = app.listen(config.server.port, config.server.host, () => {
   NginxLifecycle.probe().then(({ ok, message }) => {
     if (!ok) console.warn('⚠ ' + message);
   });
+
+  // Start the resource-metrics sampler (10s default; decouples PM2 from requests).
+  metricsSampler.start();
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
+  metricsSampler.stop();
   console.log('SIGTERM signal received: closing HTTP server');
   server.close(() => {
     console.log('HTTP server closed');
@@ -81,6 +86,7 @@ process.on('SIGTERM', () => {
 });
 
 process.on('SIGINT', () => {
+  metricsSampler.stop();
   console.log('\nSIGINT signal received: closing HTTP server');
   server.close(() => {
     console.log('HTTP server closed');

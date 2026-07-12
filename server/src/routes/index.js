@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config');
 const LogManager = require('../services/log-manager');
+const metricsSampler = require('../services/metrics-sampler');
 
 /**
  * API Routes
@@ -38,29 +39,50 @@ router.get('/config', (req, res) => {
   });
 });
 
-// Get all applications
+// Get all applications (with latest resource metrics attached)
 router.get('/apps', async (req, res, next) => {
   try {
     const apps = await AppManager.getAllApps();
+    const withMetrics = apps.map(app => ({
+      ...app,
+      metrics: metricsSampler.getLatest(app.name)
+    }));
 
     res.json({
       success: true,
-      data: apps
+      data: withMetrics
     });
   } catch (error) {
     next(error);
   }
 });
 
-// Get application by ID
+// Get application by ID (with latest resource metrics attached)
 router.get('/apps/:id', async (req, res, next) => {
   try {
     const app = await AppManager.getAppById(req.params.id);
 
     res.json({
       success: true,
-      data: app
+      data: { ...app, metrics: metricsSampler.getLatest(app.name) }
     });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    next(error);
+  }
+});
+
+// Get application resource-metrics history
+router.get('/apps/:id/metrics', async (req, res, next) => {
+  try {
+    const app = await AppManager.getAppById(req.params.id);
+    const history = metricsSampler.getHistory(app.name);
+    res.json({ success: true, data: history });
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({
