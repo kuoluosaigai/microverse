@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const AppManager = require('../services/app-manager');
 const DeployManager = require('../services/deploy-manager');
-const { upload } = require('../middleware/upload');
+const { upload, restoreUpload } = require('../middleware/upload');
 const AdmZip = require('adm-zip');
 const path = require('path');
 const fs = require('fs');
@@ -10,7 +10,6 @@ const config = require('../config');
 const LogManager = require('../services/log-manager');
 const metricsSampler = require('../services/metrics-sampler');
 const BackupManager = require('../services/backup-manager');
-const { restoreUpload } = require('../middleware/upload');
 const AuthManager = require('../services/auth-manager');
 const { requireAuth } = require('../middleware/auth');
 
@@ -162,7 +161,7 @@ router.post('/apps/restore', (req, res, next) => {
       const app = await BackupManager.restoreBackup(req.file.buffer);
       res.status(201).json({ success: true, data: app });
     } catch (error) {
-      const isClientError = ['Invalid backup file', 'Invalid app name', 'Invalid deploy_type', 'already exists']
+      const isClientError = ['Invalid backup file', 'Invalid app name', 'Invalid deploy_type', 'already exists', 'Unsafe zip entry path']
         .some(s => error.message.includes(s));
       if (isClientError) {
         return res.status(400).json({ success: false, error: { message: error.message } });
