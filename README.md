@@ -16,7 +16,7 @@ A web-based platform for deploying and managing micro applications. Create, uplo
 - ⚙️ **Port Management**: Automatic port allocation in a configurable range (3000–9000 by default)
 - 📊 **Status Sync**: `Live` / `Idle` status, reconciled with actual PM2 process state
 - 🔒 **Admin Login**: the dashboard and API are gated behind a single admin session (set `ADMIN_USERNAME`/`ADMIN_PASSWORD` in `.env`; the password is bcrypt-hashed on first boot)
-- 💾 **Backup & Restore**: export any app as a zip (files + manifest + env) and restore it on the same or another instance
+- 💾 **Backup & Restore**: export any app as a zip (files + manifest + env) and restore it on the same or another instance. Backups include environment variables (which may contain secrets) — store and share them accordingly
 - 📜 **Live Logs**: stream each app's PM2 stdout/stderr from a dedicated logs page — recent history on open, then new lines in real time
 - 📈 **Resource Metrics**: per-app CPU / memory / uptime — inline on the dashboard and on a dedicated metrics page with sparkline history (sampled every 10s)
 - 🌐 **Bilingual UI**: Chinese / English toggle, persisted per browser

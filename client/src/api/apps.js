@@ -167,8 +167,11 @@ export const backupAppUrl = (id) => `/api/apps/${id}/backup`
 export const restoreApp = async (file) => {
   const form = new FormData()
   form.append('file', file)
+  // Clear the instance's default JSON Content-Type so the browser sets
+  // multipart/form-data WITH a boundary; a hand-set header omits the boundary
+  // and multer rejects the body ("Multipart: Boundary not found").
   const response = await api.post('/apps/restore', form, {
-    headers: { 'Content-Type': 'multipart/form-data' }
+    headers: { 'Content-Type': null }
   })
   return response.data.data
 }
