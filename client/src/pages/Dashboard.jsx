@@ -35,6 +35,13 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Silent background refresh every 10s (no spinner; just updates app data incl. metrics).
+  useEffect(() => {
+    const timer = setInterval(() => loadApps(false), 10000)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleStart = async (appId) => {
     setStartingId(appId)
     try {

@@ -38,6 +38,12 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
 
   const typeLabel = t(`appCard.deployTypes.${app.deploy_type}`) || app.deploy_type
 
+  const memShort = (bytes) => {
+    if (!bytes && bytes !== 0) return ''
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}K`
+    return `${Math.round(bytes / (1024 * 1024))}M`
+  }
+
   return (
     <>
       <li className="app-row">
@@ -62,6 +68,13 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
                 <span>{app.port}</span>
               )}
             </>
+          ) : (
+            <span className="lbl">—</span>
+          )}
+        </div>
+        <div className="metrics">
+          {isRunning && app.metrics ? (
+            <span>{app.metrics.cpu.toFixed(1)}% · {memShort(app.metrics.memory)}</span>
           ) : (
             <span className="lbl">—</span>
           )}

@@ -44,8 +44,8 @@
 .app-list { list-style: none; }
 .app-row {
   display: grid;
-  grid-template-columns: 40px minmax(180px,1fr) 140px 150px 80px 1fr;
-  align-items: center; gap: 18px;
+  grid-template-columns: 40px minmax(160px,1fr) 130px 130px 150px 80px 1fr;
+  align-items: center; gap: 16px;
   padding: 22px 8px; border-bottom: 1px solid var(--rule);
   transition: background .15s;
 }
@@ -64,6 +64,8 @@
 .port-chip:hover { background: var(--surface); }
 .app-row .kind { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: 0.12em; color: var(--ink-3); }
+.app-row .metrics { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.app-row .metrics .lbl { color: var(--ink-3); }
 .app-row .status { font-family: var(--serif); font-size: 13px; font-style: italic; }
 .app-row .status.live { color: var(--accent); }
 .app-row .status.idle { color: var(--idle); }
@@ -144,7 +146,7 @@
 /* ----- Responsive: collapse the row on small screens ----- */
 @media (max-width: 760px) {
   .app-row { grid-template-columns: 30px 1fr; row-gap: 10px; }
-  .app-row .port, .app-row .kind, .app-row .status { grid-column: 2; }
+  .app-row .port, .app-row .metrics, .app-row .kind, .app-row .status { grid-column: 2; }
   .app-row .acts { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
 }
 
