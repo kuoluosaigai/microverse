@@ -53,8 +53,17 @@ const upload = multer({
   }
 });
 
+// Separate multer instance for backup restore: single file, in-memory (no temp
+// upload file on disk), same .zip-allowing filter + size limit as uploads.
+const restoreUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter,
+  limits: { fileSize: MAX_FILE_SIZE }
+}).single('file');
+
 module.exports = {
   upload,
+  restoreUpload,
   MAX_FILE_SIZE,
   ALLOWED_EXTENSIONS
 };
