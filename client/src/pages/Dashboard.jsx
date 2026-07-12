@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
 import AppRow from '../components/AppRow'
 import LanguageSwitcher from '../components/LanguageSwitcher'
-import { getAllApps, deleteApp, startApp, stopApp } from '../api/apps'
+import { getAllApps, deleteApp, startApp, stopApp, restoreApp } from '../api/apps'
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -81,6 +81,21 @@ function Dashboard() {
     }
   }
 
+  const fileInputRef = useRef(null)
+
+  const handleRestore = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = '' // allow re-selecting the same file
+    if (!file) return
+    try {
+      await restoreApp(file)
+      message.success(t('messages.restoreDone'))
+      await loadApps(true)
+    } catch (err) {
+      message.error(err.response?.data?.error?.message || t('messages.restoreFailed'))
+    }
+  }
+
   const runningCount = apps.filter((a) => a.status === 'running').length
   const lead = t('dashboard.lead', { count: apps.length })
   const suffix = runningCount ? ' ' + t('dashboard.runningSuffix', { count: runningCount }) : ''
@@ -97,7 +112,17 @@ function Dashboard() {
       <button className="nav-link accent" onClick={() => navigate('/create')}>
         + {t('dashboard.createApp')}
       </button>
+      <button className="nav-link" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+        ↥ {t('dashboard.restore')}
+      </button>
       <LanguageSwitcher />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip"
+        style={{ display: 'none' }}
+        onChange={handleRestore}
+      />
     </>
   )
 

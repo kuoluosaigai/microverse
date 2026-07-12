@@ -37,7 +37,8 @@
     "noApps": "No applications yet",
     "noAppsDesc": "Create your first application to deploy and manage it here.",
     "emptyCta": "Create your first app →",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "restore": "Restore"
   },
   "createApp": {
     "title": "Create Application",
@@ -107,7 +108,8 @@
     "fileTypes": {
       "file": "File",
       "directory": "Directory"
-    }
+    },
+    "backup": "Backup"
   },
   "appLogs": {
     "title": "Logs",
@@ -150,6 +152,8 @@
     "appStopped": "Application stopped successfully",
     "filesUploaded": "Files uploaded successfully",
     "operationFailed": "Operation failed",
-    "confirmDelete": "This action cannot be undone"
+    "confirmDelete": "This action cannot be undone",
+    "restoreDone": "App restored",
+    "restoreFailed": "Restore failed"
   }
 }

@@ -155,4 +155,22 @@ export const getConfig = async () => {
 export const appLogsStreamUrl = (id, lines = 100) =>
   `/api/apps/${id}/logs/stream?lines=${lines}`
 
+/**
+ * Backup-download URL for an app. Consumed via a programmatic <a download> click
+ * (same-origin → session cookie rides automatically; no axios/blob needed).
+ */
+export const backupAppUrl = (id) => `/api/apps/${id}/backup`
+
+/**
+ * Restore an app from a backup zip (multipart field 'file'). Returns the new app.
+ */
+export const restoreApp = async (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await api.post('/apps/restore', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+  return response.data.data
+}
+
 export default api

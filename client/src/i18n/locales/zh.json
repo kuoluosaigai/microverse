@@ -37,7 +37,8 @@
     "noApps": "暂无应用",
     "noAppsDesc": "创建你的第一个应用，在此部署与管理。",
     "emptyCta": "创建第一个应用 →",
-    "loading": "加载中…"
+    "loading": "加载中…",
+    "restore": "恢复"
   },
   "createApp": {
     "title": "创建应用",
@@ -107,7 +108,8 @@
     "fileTypes": {
       "file": "文件",
       "directory": "目录"
-    }
+    },
+    "backup": "备份"
   },
   "appLogs": {
     "title": "日志",
@@ -150,6 +152,8 @@
     "appStopped": "应用停止成功",
     "filesUploaded": "文件上传成功",
     "operationFailed": "操作失败",
-    "confirmDelete": "此操作不可撤销"
+    "confirmDelete": "此操作不可撤销",
+    "restoreDone": "应用已恢复",
+    "restoreFailed": "恢复失败"
   }
 }

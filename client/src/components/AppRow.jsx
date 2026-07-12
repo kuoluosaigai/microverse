@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Modal, Spin, Popconfirm, message } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { getAppFiles } from '../api/apps'
+import { getAppFiles, backupAppUrl } from '../api/apps'
 import EnvModal from './EnvModal'
 
 function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
@@ -107,6 +107,19 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
             onClick={() => navigate(`/apps/${app.id}/upload`)}
           >
             {t('appCard.upload')}
+          </button>
+          <button
+            className="act"
+            onClick={() => {
+              const a = document.createElement('a')
+              a.href = backupAppUrl(app.id)
+              a.download = `${app.name}-backup.zip`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            }}
+          >
+            {t('appCard.backup')}
           </button>
           {app.deploy_type === 'npm' && (
             <button className="act" onClick={() => setEnvOpen(true)}>
