@@ -49,7 +49,7 @@ function AppLogs() {
   // Open the SSE stream; re-open whenever streamTick changes (Retry).
   useEffect(() => {
     setStatus('live')
-    const es = new EventSource(appLogsStreamUrl(id))
+    const es = new EventSource(appLogsStreamUrl(id), { withCredentials: true })
 
     const markLive = () => {
       lastLineAtRef.current = Date.now()

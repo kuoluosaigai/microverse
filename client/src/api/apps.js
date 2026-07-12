@@ -14,8 +14,11 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response) {
-      // Server responded with error status
-      console.error('API Error:', error.response.data)
+      // 401 is expected (e.g. AuthContext's getMe probe when logged out) and is
+      // handled by callers via .catch — don't log it as an error.
+      if (error.response.status !== 401) {
+        console.error('API Error:', error.response.data)
+      }
     } else if (error.request) {
       // Request made but no response
       console.error('Network Error:', error.message)
