@@ -151,6 +151,8 @@
 - [ ] 需要添加请求限流
 - [ ] 输入验证、SQL 注入防护等安全性增强
 - [ ] `MAX_FILE_SIZE` 默认值在 config 与 .env.example 间需保持同步
+- [ ] 端口探测的 Windows 双栈盲区：`isPortAvailable` 能检出 IPv4-only（`0.0.0.0`）与 IPv6-only（`::`）监听器，但检不出"双栈 `::`（未设 `ipv6Only`）"的监听器——Windows 的 SO_REUSEADDR 允许异栈 socket 并存绑定。对平台托管的 app 无影响（DB 的 `getAllClaimedPorts` exclude 是兜底），仅影响"DB 外的双栈外部进程"。根治需 `SO_EXCLUSIVEADDRUSE` 或查 OS 端口表。
+- [ ] 并发 `deployApp` 的 TOCTOU：两个无端口 app 同时 start 可能读到同一 claimed 集合、选到同一端口（`deploy-manager.js` deployApp）。概率低（用户驱动 + PM2 启动慢）。可用 `UPDATE apps SET port=? WHERE id=? AND port IS NULL` 或进程内锁解决。
 
 ### 💡 改进建议
 - [ ] 添加 TypeScript 支持
