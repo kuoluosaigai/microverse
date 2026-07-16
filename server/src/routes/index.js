@@ -12,6 +12,7 @@ const metricsSampler = require('../services/metrics-sampler');
 const BackupManager = require('../services/backup-manager');
 const AuthManager = require('../services/auth-manager');
 const { requireAuth } = require('../middleware/auth');
+const { loginLimiter, apiLimiter } = require('../middleware/rate-limit');
 const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
 
@@ -45,7 +46,7 @@ router.get('/config', (req, res) => {
 });
 
 // Authenticate (public — must be registered BEFORE requireAuth)
-router.post('/auth/login', async (req, res, next) => {
+router.post('/auth/login', loginLimiter, async (req, res, next) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -76,6 +77,9 @@ router.post('/auth/login', async (req, res, next) => {
 
 // Everything below requires an authenticated session.
 router.use(requireAuth);
+
+// Generic per-IP ceiling on authenticated API traffic (SSE exempt via skip).
+router.use(apiLimiter);
 
 // Get all applications (with latest resource metrics attached)
 router.get('/apps', async (req, res, next) => {
