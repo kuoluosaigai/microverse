@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'microverse-server',
-      script: './src/app.js',
+      script: './src/server.js',
       cwd: './server',
       instances: 1,
       autorestart: true,

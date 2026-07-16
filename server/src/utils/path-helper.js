@@ -13,7 +13,7 @@ const getProjectRoot = () => {
 
 // Get apps directory
 const getAppsDir = () => {
-  return path.join(getProjectRoot(), 'apps');
+  return process.env.APPS_DIR || path.join(getProjectRoot(), 'apps');
 };
 
 // Get data directory
