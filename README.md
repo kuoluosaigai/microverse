@@ -148,7 +148,8 @@ npm run pm2:logs
 microverse/
 ├── server/                 # Backend server
 │   ├── src/
-│   │   ├── app.js         # Express application entry point
+│   │   ├── server.js      # Process entry (listens + bootstraps)
+│   │   ├── app.js         # createApp() — Express app factory (used by tests)
 │   │   ├── config/        # Configuration management
 │   │   ├── db/            # Database (SQLite via sqlite3)
 │   │   ├── routes/        # API routes
