@@ -277,6 +277,8 @@ npm test
 
 Covers pure helpers and all non-PM2 API endpoints against an isolated temp DB. PM2-dependent endpoints (start/stop/restart/sync/metrics/logs) are still manually verified.
 
+> Note: the suite uses a glob test-runner invocation (`node --test "src/test/**/*.test.js"`) that requires Node ≥ 22; the server runtime itself supports Node ≥ 18 (`engines.node`).
+
 ### Database
 
 SQLite stores application metadata. The database file is created automatically at `data/microverse.sqlite` on first server start. To reset it, delete the file and restart the server.

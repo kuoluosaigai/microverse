@@ -15,4 +15,6 @@ test('api limiter: 101st request within window -> 429', async () => {
   }
   const blocked = await agent.get('/api/apps');
   assert.equal(blocked.status, 429);
+  assert.equal(blocked.body.success, false);
+  assert.match(blocked.body.error.message, /Too many requests/);
 });
