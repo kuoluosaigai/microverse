@@ -266,6 +266,16 @@ npm run lint    # ESLint, --max-warnings 0
 npm run build   # Vite production build
 ```
 
+### Tests
+
+Backend unit + integration tests (Node's built-in test runner):
+
+```bash
+npm test
+```
+
+Covers pure helpers and all non-PM2 API endpoints against an isolated temp DB. PM2-dependent endpoints (start/stop/restart/sync/metrics/logs) are still manually verified.
+
 ### Database
 
 SQLite stores application metadata. The database file is created automatically at `data/microverse.sqlite` on first server start. To reset it, delete the file and restart the server.

@@ -136,6 +136,7 @@
 ### 🎯 Phase 15: 优化和增强 (优先级: 低)
 - [ ] 数据库迁移系统
 - [x] 应用备份和恢复（per-app zip 导出/导入；manifest 含 name/deploy_type/env；恢复同名报 400、失败回滚）
+- [x] 请求限流（login 5/15min + API 100/min，SSE 豁免）
 - [ ] 批量操作支持
 - [ ] 应用模板系统
 - [ ] 命令行工具 (CLI)
@@ -146,10 +147,10 @@
 - 无已知严重 bug
 
 ### ⚠️ 技术债
-- [ ] 缺少单元测试 / 集成测试（目前仅手动测试）
+- [~] 后端单元/集成测试已建立（node:test + supertest，覆盖非 PM2 端点）；PM2 端点仍手动
 - [x] API 文档可用 Swagger/OpenAPI 规范化（openapi.yaml + swagger-ui-express @ /api-docs）
 - [ ] 前端缺少错误边界 (Error Boundary)
-- [ ] 需要添加请求限流
+- [x] 需要添加请求限流（已实现：login + API 限流）
 - [ ] 输入验证、SQL 注入防护等安全性增强
 - [ ] `MAX_FILE_SIZE` 默认值在 config 与 .env.example 间需保持同步
 - [ ] 端口探测的 Windows 双栈盲区：`isPortAvailable` 能检出 IPv4-only（`0.0.0.0`）与 IPv6-only（`::`）监听器，但检不出"双栈 `::`（未设 `ipv6Only`）"的监听器——Windows 的 SO_REUSEADDR 允许异栈 socket 并存绑定。对平台托管的 app 无影响（DB 的 `getAllClaimedPorts` exclude 是兜底），仅影响"DB 外的双栈外部进程"。根治需 `SO_EXCLUSIVEADDRUSE` 或查 OS 端口表。
@@ -169,7 +170,7 @@
 - 后端 API: ✅ 手动测试通过
 - 前端组件: ✅ 手动测试通过
 - 集成测试: ✅ 完整流程测试通过（创建 / 上传 / 启动 / 端口打开 / 停止 / 查看目录 / 删除 / 切换语言）
-- 自动化测试: ❌ 未实现
+- 自动化测试: ✅ 后端（单元 + 非 PM2 端点集成）；运行: `npm test`
 
 ## 性能指标
 
@@ -206,6 +207,15 @@
 - 文档: Claude + Human Developer
 
 ## 变更日志
+
+### [Unreleased] — 2026-07-17
+#### 新增
+- 后端自动化测试（node:test）：纯逻辑单元测试（端口分配/zip-slip/env 校验/manifest 校验）+ supertest 集成测试（health/config/apps CRUD/auth/env/backup-restore/限流）。PM2 端点仍手动。
+- 请求限流：`loginLimiter`（5/15min/IP 防爆破）+ `apiLimiter`（100/min/IP，SSE 豁免），429 沿用统一错误体。
+#### 重构
+- `app.js` 拆出 `createApp()` + 新 `server.js` 入口（测试可 import；启动行为不变）。
+- `APPS_DIR` env（`path-helper.getAppsDir`）支持测试重定向 app 目录。
+- 提取 `utils/{validate-zip,validate-env,validate-manifest}.js` 纯函数并单测。
 
 ### [Unreleased] — 2026-07-17
 #### 范围调整
