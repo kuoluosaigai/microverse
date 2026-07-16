@@ -4,10 +4,10 @@ const path = require('path');
 const { queries } = require('../db');
 const AppManager = require('./app-manager');
 const pathHelper = require('../utils/path-helper');
+const { validateManifest } = require('../utils/validate-manifest');
+const { isSafeEntry } = require('../utils/validate-zip');
 
 const MANIFEST_NAME = 'microverse-manifest.json';
-const VALID_DEPLOY_TYPES = ['npm', 'http-server', 'nginx'];
-const NAME_RE = /^[a-zA-Z0-9-_]+$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -61,12 +61,8 @@ class BackupManager {
     } catch (_e) {
       throw new Error('Invalid backup file: corrupt manifest');
     }
-    if (!manifest || typeof manifest.name !== 'string' || !NAME_RE.test(manifest.name)) {
-      throw new Error('Invalid app name in backup');
-    }
-    if (!VALID_DEPLOY_TYPES.includes(manifest.deploy_type)) {
-      throw new Error('Invalid deploy_type in backup');
-    }
+    const manifestError = validateManifest(manifest);
+    if (manifestError) throw new Error(manifestError);
     const existing = await queries.getAppByName(manifest.name);
     if (existing) {
       throw new Error(`App '${manifest.name}' already exists; rename or delete it first`);
@@ -81,10 +77,8 @@ class BackupManager {
       tmpDir = fs.mkdtempSync(path.join(pathHelper.getAppsDir(), '.restore-'));
 
       // zip-slip guard: every entry must resolve inside tmpDir before extracting.
-      const safeRoot = path.resolve(tmpDir);
       for (const e of zip.getEntries()) {
-        const target = path.resolve(tmpDir, e.entryName);
-        if (target !== safeRoot && !target.startsWith(safeRoot + path.sep)) {
+        if (!isSafeEntry(tmpDir, e.entryName)) {
           throw new Error(`Unsafe zip entry path: ${e.entryName}`);
         }
       }
