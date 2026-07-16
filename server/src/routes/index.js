@@ -12,6 +12,7 @@ const metricsSampler = require('../services/metrics-sampler');
 const BackupManager = require('../services/backup-manager');
 const AuthManager = require('../services/auth-manager');
 const { requireAuth } = require('../middleware/auth');
+const { isSafeEntry } = require('../utils/validate-zip');
 
 /**
  * API Routes
@@ -510,11 +511,9 @@ router.post('/apps/:id/upload', async (req, res, next) => {
 
             // Guard against path traversal (zip-slip): every entry must
             // resolve inside the app directory before we extract.
-            const safeRoot = path.resolve(app.path);
             const entries = zip.getEntries();
             for (const entry of entries) {
-              const entryTarget = path.resolve(app.path, entry.entryName);
-              if (entryTarget !== safeRoot && !entryTarget.startsWith(safeRoot + path.sep)) {
+              if (!isSafeEntry(app.path, entry.entryName)) {
                 throw new Error(`Unsafe zip entry path: ${entry.entryName}`);
               }
             }
