@@ -13,6 +13,7 @@ const BackupManager = require('../services/backup-manager');
 const AuthManager = require('../services/auth-manager');
 const { requireAuth } = require('../middleware/auth');
 const { isSafeEntry } = require('../utils/validate-zip');
+const { validateEnvEntries } = require('../utils/validate-env');
 
 /**
  * API Routes
@@ -581,29 +582,9 @@ router.get('/apps/:id/env', async (req, res, next) => {
 router.put('/apps/:id/env', async (req, res, next) => {
   try {
     const { env } = req.body;
-    if (!Array.isArray(env)) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'env must be an array of { key, value }' }
-      });
-    }
-
-    const keyRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    const seen = new Set();
-    for (const entry of env) {
-      if (!entry || typeof entry.key !== 'string' || !keyRe.test(entry.key)) {
-        return res.status(400).json({
-          success: false,
-          error: { message: `Invalid env key: ${entry && entry.key}` }
-        });
-      }
-      if (seen.has(entry.key)) {
-        return res.status(400).json({
-          success: false,
-          error: { message: `Duplicate env key: ${entry.key}` }
-        });
-      }
-      seen.add(entry.key);
+    const envError = validateEnvEntries(env);
+    if (envError) {
+      return res.status(400).json({ success: false, error: { message: envError } });
     }
 
     const entries = env.map(e => ({ key: e.key, value: e.value === undefined ? null : e.value }));
