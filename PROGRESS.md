@@ -149,13 +149,13 @@
 ### ⚠️ 技术债
 - [~] 后端单元/集成测试已建立（node:test + supertest，覆盖非 PM2 端点）；PM2 端点仍手动
 - [x] API 文档可用 Swagger/OpenAPI 规范化（openapi.yaml + swagger-ui-express @ /api-docs）
-- [ ] 前端缺少错误边界 (Error Boundary)
+- [x] 前端错误边界 (Error Boundary)（顶层 + 每页）
 - [x] 需要添加请求限流（已实现：login + API 限流）
-- [ ] 输入验证、SQL 注入防护等安全性增强
+- [x] 应用名格式校验（防路径穿越/配置注入）；SQL 注入为伪命题（查询全参数化）
 - [ ] `MAX_FILE_SIZE` 默认值在 config 与 .env.example 间需保持同步
 - [ ] 端口探测的 Windows 双栈盲区：`isPortAvailable` 能检出 IPv4-only（`0.0.0.0`）与 IPv6-only（`::`）监听器，但检不出"双栈 `::`（未设 `ipv6Only`）"的监听器——Windows 的 SO_REUSEADDR 允许异栈 socket 并存绑定。对平台托管的 app 无影响（DB 的 `getAllClaimedPorts` exclude 是兜底），仅影响"DB 外的双栈外部进程"。根治需 `SO_EXCLUSIVEADDRUSE` 或查 OS 端口表。
-- [ ] 并发 `deployApp` 的 TOCTOU：两个无端口 app 同时 start 可能读到同一 claimed 集合、选到同一端口（`deploy-manager.js` deployApp）。概率低（用户驱动 + PM2 启动慢）。可用 `UPDATE apps SET port=? WHERE id=? AND port IS NULL` 或进程内锁解决。
-- [ ] nginx app 的 SSE 日志页只能看到启动/致命错误（进 PM2 stderr）；nginx 运行时 access/error 写到 `<app>/nginx-*.log`，未接入 `LogManager`。后续让 LogManager 对 nginx app 改 tail 这些文件。
+- [x] 并发 `deployApp` 的 TOCTOU：两个无端口 app 同时 start 可能读到同一 claimed 集合、选到同一端口（`deploy-manager.js` deployApp）。概率低（用户驱动 + PM2 启动慢）。可用 `UPDATE apps SET port=? WHERE id=? AND port IS NULL` 或进程内锁解决。（已修复：deploy-manager 端口分配临界区进程内串行化）
+- [x] nginx app 的 SSE 日志页只能看到启动/致命错误（进 PM2 stderr）；nginx 运行时 access/error 写到 `<app>/nginx-*.log`，未接入 `LogManager`。后续让 LogManager 对 nginx app 改 tail 这些文件。（已修复：LogManager 按 deploy_type 分流，nginx 返回 nginx-*.log）
 
 ### 💡 改进建议
 - [ ] 添加 TypeScript 支持
@@ -207,6 +207,13 @@
 - 文档: Claude + Human Developer
 
 ## 变更日志
+
+### [Unreleased] — 2026-07-18
+#### 技术债清扫
+- 应用名校验：新增 `utils/validate-app-name.js`（`^[A-Za-z0-9_-]{1,64}$`），在 `AppManager.createApp`（覆盖 POST /apps 与 restore）+ `validateManifest` 强制；前端 CreateApp 加 64 字符上限。堵路径穿越/配置注入面（SQL 注入为伪命题——查询全参数化）。
+- TOCTOU 端口竞态：`deploy-manager` 用依赖无关的 `utils/serialize.js#createExclusive` 串行化"读 claimed → 选端口 → 写库"临界区；install/build/start 仍在锁外。
+- nginx 日志接入：`LogManager.getLogPaths(app)` 按 `deploy_type` 分流，nginx app 的日志页现在显示 `nginx-access.log`（普通）/`nginx-error.log`（红色）；非 nginx 行为不变。
+- 前端 ErrorBoundary：class 组件 + `compact` 变体，顶层包 Routes、每页各包一层；单页 render 报错降级为页内卡片而非白屏。
 
 ### [Unreleased] — 2026-07-17
 #### 新增
