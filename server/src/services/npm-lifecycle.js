@@ -34,7 +34,12 @@ class NpmLifecycle {
    */
   static async install(appPath) {
     try {
-      await execPromise('npm install', {
+      // --include=dev: the platform runs under NODE_ENV=production, which makes
+      // plain `npm install` omit devDependencies. Build tools (@vue/cli-service,
+      // vite, tsc, ...) live in devDependencies and are required for `npm run
+      // build`, so install MUST include them. --no-audit/--no-fund skip
+      // non-essential network calls during deploy.
+      await execPromise('npm install --include=dev --no-audit --no-fund', {
         cwd: appPath,
         timeout: config.deployment.npmInstallTimeoutMs,
         maxBuffer: 4 * 1024 * 1024,
