@@ -5,6 +5,13 @@
 - **范围**: 五项服务于"域名部署自洽 + 更新干净 + 文档对齐"的工作——ZIP 自动去顶层目录、子域名外链配置、后端生产模式托管前端（替代 openclaw 未提交补丁）、生产部署文档重写 + 提交 `ecosystem.config.js`、中文 README。
 - **不在范围**: 多用户、JWT、nginx 反代/SSL/域名绑定本身（用户的反代基建，不归平台管）、per-app 自定义外链（YAGNI，全局模板已覆盖"子域名 = 应用名"场景）。
 
+> **Update 2026-07-18:** The "不做 nginx 反代/SSL/域名绑定（用户基建）" scope
+> decision (lines 6, 215) is **superseded** by
+> `docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md`, which adds
+> a platform-managed nginx reverse proxy (subdomain routing + root-domain
+> default app). SSL cert issuance remains out of scope; only the config
+> structure is reserved.
+
 ## 背景
 
 用户实际用域名部署后反馈三个问题，并触发一项部署一致性发现：

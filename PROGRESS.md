@@ -208,6 +208,19 @@
 
 ## 变更日志
 
+### [Unreleased] — 2026-07-18 (nginx reverse proxy + session hardening)
+#### 新增
+- 平台托管 nginx 反向代理（opt-in via `PROXY_ENABLED`）：平台把每个运行中应用的子域名路由（`<app>.<base-domain>` → 应用端口）写入 `PROXY_CONF_FILE` 并 `nginx -s reload`；应用 start/stop/delete 自动重生成。设计文档：[docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md](docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md)。
+- 根域名默认应用：任意运行中的应用可被标为默认，`http://<base-domain>/` 由它代理；切换/停止自动重生成。
+- SSL 配置结构预留（`PROXY_SSL_*`，v1 **不签发证书**——只生成 server 块形态，用户自行 certbot 后填路径）。
+- `.env.example` 暴露 `PROXY_*` 与 `SESSION_COOKIE_SECURE` 旋钮。
+#### 修复
+- 会话加固：cookie `Secure` 跟随 `PROXY_SSL_ENABLED`（生产默认开），`SESSION_SECRET` 稳定即可跨重启保持登录；修复服务器重启 / 长时间间隔后"无故被登出"。
+- 登录页密码框双下划线 CSS 修复（Ant Design `aria-hidden` 装饰下划线被渲染为可见的第二条线）。
+#### 文档
+- README（中 / 英）新增"反向代理（在 80 端口通过子域名访问）"章节：nginx include + 权限 + DNS + `PROXY_*` 用法 + 根域名默认应用 + SSL 预留说明。
+- 在 `2026-07-18-domain-deploy-hardening-design.md` 顶部加 supersede 提示：原"不做 nginx 反代"的范围决策被本设计取代。
+
 ### [Unreleased] — 2026-07-18 (domain deploy hardening)
 #### 新增
 - ZIP 自动去顶层目录：上传解压后若只有一个顶层文件夹则抬层（`utils/flatten-zip-root.js`），解决"zip 多套一层目录导致 index.html 校验失败"。

@@ -124,6 +124,25 @@ npm run pm2:start
 > 若要让已部署应用的 **Open**（打开）链接使用你的域名而非 `localhost`，
 > 请设置 `APP_PUBLIC_URL_TEMPLATE`（参见 [配置](#配置)）。
 
+### 反向代理（在 80 端口通过子域名访问）
+
+应用默认监听高端口。若要通过 `http://<app>.yourdomain.com/` 在 80 端口访问它们，
+请启用平台托管的反向代理：
+
+1. 安装 nginx，并确保它的 `nginx.conf` 包含下方配置目录（Debian/Ubuntu 默认
+   include `/etc/nginx/conf.d/*.conf`）。
+2. 在 `.env` 中设置 `PROXY_ENABLED=true` 以及 `APP_PUBLIC_URL_TEMPLATE=http://{name}.yourdomain.com`
+   （或设置 `PROXY_BASE_DOMAIN=yourdomain.com`）。
+3. 为每个应用子域名添加 DNS 记录（或一条 `*.yourdomain.com` 通配记录）指向本服务器。
+4. 以足够权限运行平台，使其能够写入 `PROXY_CONF_FILE` 并执行
+   `nginx -s reload`（通常：PM2 进程以 root 运行，或处于 `nginx` 组中并对配置目录
+   + pid 文件具有写权限）。
+
+启动 / 停止 / 删除应用时，平台会自动重新生成并 reload 配置。你也可以在某个运行中的
+应用所在行勾选**根域名默认应用**开关，让 `http://yourdomain.com/` 由它提供服务。SSL
+结构已预留——当你提供证书路径（`PROXY_SSL_*`）时即生效；平台自身**不签发**证书，请
+自行获取（例如 `certbot`）并在配置中指向它。
+
 ### 更新现有部署
 
 `data/*.sqlite`（应用、环境变量、管理员账户）和 `apps/`（已部署的应用文件）都被 gitignore 忽略，且数据库 schema 在启动时会自愈（`CREATE TABLE IF NOT EXISTS`），因此更新绝不会丢失数据，也无需任何迁移步骤。

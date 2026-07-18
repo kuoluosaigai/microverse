@@ -126,6 +126,27 @@ npm run pm2:start
 > To make deployed-app **Open** links use your domain instead of `localhost`,
 > set `APP_PUBLIC_URL_TEMPLATE` (see [Configuration](#configuration)).
 
+### Reverse proxy (subdomain access on port 80)
+
+Apps listen on high ports. To reach them at `http://<app>.yourdomain.com/` on
+port 80, enable the platform-managed reverse proxy:
+
+1. Install nginx and ensure its `nginx.conf` includes the conf dir below
+   (Debian/Ubuntu include `/etc/nginx/conf.d/*.conf` by default).
+2. In `.env` set `PROXY_ENABLED=true` and `APP_PUBLIC_URL_TEMPLATE=http://{name}.yourdomain.com`
+   (or set `PROXY_BASE_DOMAIN=yourdomain.com`).
+3. Add a DNS record for each app subdomain (or a `*.yourdomain.com` wildcard)
+   pointing at this server.
+4. Run the platform with enough privilege to write `PROXY_CONF_FILE` and run
+   `nginx -s reload` (typically: the PM2 process runs as root, or is in the
+   `nginx` group with write access to the conf dir + pid file).
+
+Start/stop/delete an app and the platform regenerates + reloads automatically.
+Optionally mark one running app as the **root-domain default** (toggle on its
+row) to serve `http://yourdomain.com/` from it. SSL is wired for when you
+supply cert paths (`PROXY_SSL_*`); the platform does not issue certificates
+itself — obtain them (e.g. `certbot`) and point the config at them.
+
 ### Updating an existing deployment
 
 `data/*.sqlite` (apps, env, admin account) and `apps/` (deployed app files) are
