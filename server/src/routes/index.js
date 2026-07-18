@@ -41,7 +41,8 @@ router.get('/config', (req, res) => {
       upload: {
         maxFileSize: config.deployment.maxFileSize,
         maxFiles: config.deployment.maxFiles
-      }
+      },
+      appPublicUrlTemplate: config.deployment.appPublicUrlTemplate || null
     }
   });
 });

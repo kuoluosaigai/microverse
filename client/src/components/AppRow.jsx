@@ -4,11 +4,14 @@ import { Modal, Spin, Popconfirm, message } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles, backupAppUrl } from '../api/apps'
+import { useAppConfig } from '../context/AppConfigContext'
+import { buildAppUrl } from '../utils/app-url'
 import EnvModal from './EnvModal'
 
 function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
   const navigate = useNavigate()
   const { t } = useTranslation()
+  const appConfig = useAppConfig()
   const isRunning = app.status === 'running'
 
   const [dirOpen, setDirOpen] = useState(false)
@@ -31,9 +34,9 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
   }
 
   const openPort = () => {
-    if (app.port && isRunning) {
-      window.open(`http://localhost:${app.port}`, '_blank', 'noopener,noreferrer')
-    }
+    if (!app.port || !isRunning) return
+    const url = buildAppUrl(app, appConfig?.appPublicUrlTemplate) || `http://localhost:${app.port}`
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   const typeLabel = t(`appCard.deployTypes.${app.deploy_type}`) || app.deploy_type

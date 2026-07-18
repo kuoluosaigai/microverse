@@ -15,3 +15,11 @@ test('GET /api/config exposes upload limits', async () => {
   assert.ok(res.body.data.upload.maxFileSize > 0);
   assert.ok(res.body.data.upload.maxFiles > 0);
 });
+
+test('GET /api/config exposes appPublicUrlTemplate field', async () => {
+  const res = await request().get('/api/config');
+  assert.equal(res.status, 200);
+  assert.ok('appPublicUrlTemplate' in res.body.data, 'appPublicUrlTemplate present');
+  // unset in tests -> null
+  assert.equal(res.body.data.appPublicUrlTemplate, null);
+});

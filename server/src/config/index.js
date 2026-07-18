@@ -49,6 +49,12 @@ const config = {
     // nginx binary path (default 'nginx' = PATH; set NGINX_BIN for non-PATH installs)
     nginxBin: process.env.NGINX_BIN || 'nginx',
 
+    // Public URL template for deployed-app "open" links, e.g.
+    //   https://{name}.yourdomain.com
+    // {name} is replaced with the app name. Empty -> frontend falls back to
+    // http://localhost:<port> (local dev).
+    appPublicUrlTemplate: process.env.APP_PUBLIC_URL_TEMPLATE || '',
+
     // metrics sampler (resource monitoring): PM2 poll interval + ring-buffer cap
     metricsIntervalMs: parseInt(process.env.METRICS_INTERVAL_MS) || 10000,
     metricsMaxSamples: parseInt(process.env.METRICS_MAX_SAMPLES) || 180
