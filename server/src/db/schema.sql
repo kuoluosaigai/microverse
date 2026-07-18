@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS apps (
   path TEXT NOT NULL,
   deploy_type TEXT CHECK(deploy_type IN ('npm', 'http-server', 'nginx')),
   port INTEGER,
+  is_default INTEGER NOT NULL DEFAULT 0,
   status TEXT CHECK(status IN ('running', 'stopped')) DEFAULT 'stopped',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

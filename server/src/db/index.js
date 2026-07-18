@@ -68,15 +68,25 @@ async function initDatabase() {
   try {
     const schemaPath = path.join(__dirname, 'schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf-8');
-
-    // Execute schema
     await dbExec(schema);
+    await applyMigrations();
 
     console.log('✓ Database initialized successfully');
     console.log(`✓ Database path: ${DB_PATH}`);
   } catch (error) {
     console.error('✗ Database initialization failed:', error.message);
     throw error;
+  }
+}
+
+// Additive column migrations. CREATE TABLE IF NOT EXISTS will not add columns
+// to an existing table, so each new column needs an ALTER guarded by presence.
+// Idempotent: safe on fresh DBs (column already in schema) and existing DBs.
+async function applyMigrations() {
+  const cols = await dbAll(`PRAGMA table_info(apps)`);
+  if (!cols.some(c => c.name === 'is_default')) {
+    await dbExec(`ALTER TABLE apps ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`);
+    console.log('✓ Migration: added apps.is_default column');
   }
 }
 
@@ -112,11 +122,29 @@ const queries = {
         path = COALESCE(?, path),
         deploy_type = COALESCE(?, deploy_type),
         port = COALESCE(?, port),
-        status = COALESCE(?, status)
+        status = COALESCE(?, status),
+        is_default = COALESCE(?, is_default)
       WHERE id = ?`,
-      [params.path, params.deploy_type, params.port, params.status, params.id]
+      [params.path, params.deploy_type, params.port, params.status, params.is_default, params.id]
     );
     return result;
+  },
+
+  // Clear every app's default flag (used inside setDefaultApp's transaction).
+  clearDefaultApp: () => dbRun('UPDATE apps SET is_default = 0 WHERE is_default = 1'),
+
+  // Single-default: atomically clear all, then set one. Returns the updated row.
+  setDefaultApp: async (id) => {
+    await dbRun('BEGIN TRANSACTION');
+    try {
+      await dbRun('UPDATE apps SET is_default = 0 WHERE is_default = 1');
+      await dbRun('UPDATE apps SET is_default = 1 WHERE id = ?', [id]);
+      await dbRun('COMMIT');
+    } catch (err) {
+      await dbRun('ROLLBACK').catch(() => { /* ignore rollback failure */ });
+      throw err;
+    }
+    return dbGet('SELECT * FROM apps WHERE id = ?', [id]);
   },
 
   updateAppStatus: (status, id) => dbRun('UPDATE apps SET status = ? WHERE id = ?', [status, id]),
@@ -162,5 +190,7 @@ const queries = {
 module.exports = {
   db,
   queries,
-  dbReady
+  dbReady,
+  dbAll,
+  applyMigrations
 };
