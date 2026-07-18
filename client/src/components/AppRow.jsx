@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Modal, Spin, Popconfirm, message } from 'antd'
+import { Modal, Spin, Popconfirm, message, Switch } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles, backupAppUrl } from '../api/apps'
@@ -8,7 +8,7 @@ import { useAppConfig } from '../context/AppConfigContext'
 import { buildAppUrl } from '../utils/app-url'
 import EnvModal from './EnvModal'
 
-function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
+function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, startingId }) {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const appConfig = useAppConfig()
@@ -128,6 +128,16 @@ function AppRow({ app, index, onStart, onStop, onDelete, startingId }) {
             <button className="act" onClick={() => setEnvOpen(true)}>
               {t('appCard.env')}
             </button>
+          )}
+          {appConfig?.proxyEnabled && isRunning && app.port && (
+            <span className="default-toggle">
+              <Switch
+                size="small"
+                checked={!!app.is_default}
+                onChange={(checked) => onToggleDefault(app, checked)}
+              />
+              <span className="default-toggle__label">{t('appCard.rootDefault')}</span>
+            </span>
           )}
           <Popconfirm
             title={t('appCard.deleteTitle')}

@@ -116,7 +116,8 @@
       "file": "File",
       "directory": "Directory"
     },
-    "backup": "Backup"
+    "backup": "Backup",
+    "rootDefault": "Root domain"
   },
   "appLogs": {
     "title": "Logs",

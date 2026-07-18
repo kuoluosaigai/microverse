@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
 import AppRow from '../components/AppRow'
 import LanguageSwitcher from '../components/LanguageSwitcher'
-import { getAllApps, deleteApp, startApp, stopApp, restoreApp } from '../api/apps'
+import { getAllApps, deleteApp, startApp, stopApp, restoreApp, setAppDefault, clearAppDefault } from '../api/apps'
 
 function Dashboard() {
   const navigate = useNavigate()
@@ -78,6 +78,17 @@ function Dashboard() {
       await loadApps(true)
     } catch (error) {
       message.error(error.response?.data?.error?.message || t('messages.operationFailed'))
+    }
+  }
+
+  const handleToggleDefault = async (app, next) => {
+    try {
+      if (next) await setAppDefault(app.id)
+      else await clearAppDefault(app.id)
+      await loadApps(true)
+    } catch (error) {
+      message.error(error.response?.data?.error?.message || t('messages.operationFailed'))
+      await loadApps(true) // re-sync in case the Switch optimism was wrong
     }
   }
 
@@ -154,6 +165,7 @@ function Dashboard() {
               onStart={handleStart}
               onStop={handleStop}
               onDelete={handleDelete}
+              onToggleDefault={handleToggleDefault}
               startingId={startingId}
             />
           ))}

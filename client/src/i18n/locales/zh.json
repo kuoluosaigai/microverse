@@ -116,7 +116,8 @@
       "file": "文件",
       "directory": "目录"
     },
-    "backup": "备份"
+    "backup": "备份",
+    "rootDefault": "根域名"
   },
   "appLogs": {
     "title": "日志",

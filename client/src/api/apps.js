@@ -176,4 +176,20 @@ export const restoreApp = async (file) => {
   return response.data.data
 }
 
+/**
+ * Set this app as the root-domain default (reverse proxy).
+ */
+export const setAppDefault = async (id) => {
+  const response = await api.put(`/apps/${id}/default`)
+  return response.data.data
+}
+
+/**
+ * Clear this app's root-domain default.
+ */
+export const clearAppDefault = async (id) => {
+  const response = await api.delete(`/apps/${id}/default`)
+  return response.data.data
+}
+
 export default api
