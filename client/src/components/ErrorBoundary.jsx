@@ -2,7 +2,6 @@ import { Component } from 'react'
 import { Button } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import EditorialShell from './EditorialShell'
 
 // Compact fallback: inline card for a single crashed page (nav stays alive).
 function CompactFallback({ error, reload }) {
@@ -23,22 +22,22 @@ function CompactFallback({ error, reload }) {
   )
 }
 
-// Full fallback: whole-page editorial shell when the top-level tree crashes.
+// Full fallback: self-contained — does NOT use EditorialShell, so a crash in
+// the layout / AuthContext / Router can't take the fallback down with it. The
+// top-level boundary must stay renderable when everything else has failed.
 function FullFallback({ error, reload }) {
   const { t } = useTranslation()
   return (
-    <EditorialShell>
-      <div className="ed-error-fallback">
-        <h1 className="page-title">{t('errorBoundary.title')}</h1>
-        <div className="lead" style={{ marginTop: 8 }}>{t('errorBoundary.description')}</div>
-        <div className="ed-error-actions" style={{ marginTop: 24 }}>
-          <Button className="btn-ink" onClick={reload}>{t('errorBoundary.reload')}</Button>
-        </div>
-        {import.meta.env.DEV && error?.stack && (
-          <pre className="ed-error-stack">{error.stack}</pre>
-        )}
+    <div className="ed-error-fallback ed-error-full">
+      <h1 className="page-title">{t('errorBoundary.title')}</h1>
+      <div className="lead" style={{ marginTop: 8 }}>{t('errorBoundary.description')}</div>
+      <div className="ed-error-actions" style={{ marginTop: 24 }}>
+        <Button className="btn-ink" onClick={reload}>{t('errorBoundary.reload')}</Button>
       </div>
-    </EditorialShell>
+      {import.meta.env.DEV && error?.stack && (
+        <pre className="ed-error-stack">{error.stack}</pre>
+      )}
+    </div>
   )
 }
 

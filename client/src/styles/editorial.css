@@ -221,6 +221,11 @@
 /* ErrorBoundary fallbacks */
 .ed-error-fallback { text-align: left; }
 .ed-error-fallback.compact { padding: 24px 0; }
+.ed-error-full {
+  max-width: 640px;
+  margin: 80px auto;
+  padding: 0 20px;
+}
 .ed-error-actions { display: flex; align-items: center; gap: 18px; }
 .ed-error-stack {
   margin-top: 18px;

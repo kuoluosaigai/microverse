@@ -1,6 +1,7 @@
-// Canonical app-name format. Used by AppManager.createApp (covers POST /apps
-// and restore, which calls createApp) and by validateManifest. Kept in one
-// place so the create path and the restore path can't drift.
+// Canonical app-name format. Shared by AppManager.createApp (covers POST /apps
+// and restore, which calls createApp) and by validateManifest, so the create
+// and restore paths can't drift. path-helper.getAppDir retains its own
+// defensive check as a backstop; if that is ever consolidated, route it here.
 // name flows into a filesystem path (apps/<name>), an nginx config filename
 // (nginx.<name>.conf) and a PM2 process name — so the charset is tight and
 // length-capped.
