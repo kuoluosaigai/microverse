@@ -292,14 +292,36 @@ MAX_FILES=100
 NPM_INSTALL_TIMEOUT_MS=300000
 NPM_BUILD_TIMEOUT_MS=300000
 
-# nginx binary path for the nginx deploy type (default 'nginx' = PATH)
+# Admin auth（单管理员）—— 注意事项见下方
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=            # 明文；仅在首次启动时用于生成 bcrypt 哈希，之后被忽略
+SESSION_SECRET=            # 生产 / PM2 cluster 下必须设置（见下方）
+# SESSION_COOKIE_SECURE=false   # 强制 cookie Secure；默认在 production 下跟随 PROXY_SSL_ENABLED
+# SESSION_DB_PATH=data/sessions.sqlite   # 共享 session 存储（cluster 安全、重启不丢）
+
+# nginx 二进制（默认 'nginx' = PATH）。nginx 部署类型 和 反向代理 reload 都用它。
+# 必须指向真实存在的可执行文件——见下方说明。
 NGINX_BIN=nginx
 
 # PM2
 PM2_INSTANCE_NAME=microverse-server
+
+# Reverse proxy（平台托管的 nginx 边缘反代；opt-in）。见上方"反向代理"章节。
+# PROXY_ENABLED=false
+# PROXY_CONF_FILE=/etc/nginx/conf.d/microverse_apps.conf
+# PROXY_BASE_DOMAIN=                # 留空 -> 从 APP_PUBLIC_URL_TEMPLATE 推导
+# PROXY_SSL_ENABLED=false           # 仅 SSL 结构；v1 不签发证书
+# PROXY_SSL_CERT=/etc/letsencrypt/live/<domain>/fullchain.pem
+# PROXY_SSL_CERT_KEY=/etc/letsencrypt/live/<domain>/privkey.pem
 ```
 
 > 单文件大小上限通过 `MAX_FILE_SIZE`（默认 100MB）配置，由上传中间件强制执行，并通过 `GET /api/config` 暴露给前端 UI。
+
+**`SESSION_SECRET`——生产 / PM2 cluster 下必须设置。** 每个 worker 都从它派生 cookie 签名密钥；不设的话每个 worker 用不同的随机密钥，互相拒绝对方 cookie（偶发 `401 Authentication required` / 无故被登出）。填一串足够长的随机字符串即可。session 存在 `SESSION_DB_PATH`（sqlite）里，跨 worker 共享、重启不丢。
+
+**`ADMIN_PASSWORD`——仅首次启动生效。** `.env` 里是明文，只在 `users` 表为空时用于生成 bcrypt 哈希写入 DB。管理员一旦存在，再改 `.env` 里的 `ADMIN_PASSWORD` **完全不生效**。要重置密码：在 `.env` 设好新值 → 删除 `users` 行（或整个 DB）→ 重启，`ensureAdmin` 会用当前 `.env` 重新建。
+
+**`NGINX_BIN` 必须指向真实存在的 nginx 可执行文件。** 反向代理的校验与 reload（`nginx -t` / `nginx -s reload`）和 nginx 部署类型都靠它。若它指向一个不存在的路径（例如残留的 `nginx-wrapper.sh`），`nginx -t` 会失败，平台会回滚配置，应用子域名就会落到 nginx 默认的 "Welcome to nginx" 页。日志里的症状：`⚠ [proxy] nginx -t failed: ... not found`。修法：`which nginx` 拿到真实路径，把 `NGINX_BIN` 指过去（若 nginx 在 `PATH` 里，保持默认 `nginx` 即可）。
 
 ## 跨平台兼容性
 

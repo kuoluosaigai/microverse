@@ -208,6 +208,13 @@
 
 ## 变更日志
 
+### [Unreleased] — 2026-07-18 (docs: env reference + NGINX_BIN gotcha)
+#### 文档
+- README（中 / 英）`Configuration` 章节补全 env 参考：新增 Admin auth（`ADMIN_USERNAME`/`ADMIN_PASSWORD`/`SESSION_SECRET`/`SESSION_COOKIE_SECURE`/`SESSION_DB_PATH`）与 Reverse proxy（`PROXY_*`）两组，并补三条踩坑说明：
+  - `SESSION_SECRET` 在生产 / PM2 cluster 下必须设置（否则各 worker 签名密钥不同 → 偶发 401 / 跳登录）。
+  - `ADMIN_PASSWORD` 仅首次启动生效；要重置需删 `users` 行 + 重启。
+  - `NGINX_BIN` 必须指向真实存在的 nginx 可执行文件——否则 `nginx -t` 失败、反代 conf 被回滚、子域名落到 nginx 默认页（症状 `⚠ [proxy] nginx -t failed: ... not found`）。
+
 ### [Unreleased] — 2026-07-18 (cluster session store)
 #### 修复
 - PM2 cluster 多 worker 下偶发 401 "Authentication required"（含上传文件、刷新偶发跳登录页）：根因是 express-session 默认 MemoryStore 每进程一份内存、worker 间不共享。改用 connect-sqlite3（复用现有 sqlite3 驱动）的共享持久 session store（`SESSION_DB_PATH`，默认 `data/sessions.sqlite`）——session 跨 worker 可见，且重启不丢。

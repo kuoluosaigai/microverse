@@ -298,14 +298,36 @@ MAX_FILES=100
 NPM_INSTALL_TIMEOUT_MS=300000
 NPM_BUILD_TIMEOUT_MS=300000
 
-# nginx binary path for the nginx deploy type (default 'nginx' = PATH)
+# Admin auth (single admin) — see notes below
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=            # plaintext; used ONCE on first boot to seed a bcrypt hash; ignored afterwards
+SESSION_SECRET=            # REQUIRED in production / PM2 cluster (see below)
+# SESSION_COOKIE_SECURE=false   # force cookie Secure; default follows PROXY_SSL_ENABLED in production
+# SESSION_DB_PATH=data/sessions.sqlite   # shared session store (cluster-safe, survives restarts)
+
+# nginx binary (default 'nginx' = PATH). Used by BOTH the nginx deploy type AND
+# the reverse-proxy reload. Must be a real, existing executable — see notes below.
 NGINX_BIN=nginx
 
 # PM2
 PM2_INSTANCE_NAME=microverse-server
+
+# Reverse proxy (platform-managed nginx edge; opt-in). See "Reverse proxy" above.
+# PROXY_ENABLED=false
+# PROXY_CONF_FILE=/etc/nginx/conf.d/microverse_apps.conf
+# PROXY_BASE_DOMAIN=                # empty -> derived from APP_PUBLIC_URL_TEMPLATE
+# PROXY_SSL_ENABLED=false           # SSL structure only; v1 does NOT issue certs
+# PROXY_SSL_CERT=/etc/letsencrypt/live/<domain>/fullchain.pem
+# PROXY_SSL_CERT_KEY=/etc/letsencrypt/live/<domain>/privkey.pem
 ```
 
 > The per-file size limit is configured via `MAX_FILE_SIZE` (default 100MB), enforced by the upload middleware, and surfaced to the UI via `GET /api/config`.
+
+**`SESSION_SECRET` — set it in production / PM2 cluster.** Every worker derives the cookie-signing key from it; if left empty, each worker signs with a different random key and rejects the others' cookies (intermittent `401 Authentication required` / random logouts). Use any long random string. Sessions live in `SESSION_DB_PATH` (sqlite), so they're shared across cluster workers and survive restarts.
+
+**`ADMIN_PASSWORD` — first-boot only.** It's plaintext in `.env`, used once (when the `users` table is empty) to seed a bcrypt hash in the DB. Once the admin exists, changing `ADMIN_PASSWORD` in `.env` has **no effect**. To reset the password: set the new value in `.env`, delete the `users` row (or the DB), and restart — `ensureAdmin` re-seeds from the current `.env`.
+
+**`NGINX_BIN` must point at a real nginx executable.** It's used to validate and reload the reverse-proxy config (`nginx -t` / `nginx -s reload`) and to run the nginx deploy type. If it points at a path that doesn't exist (e.g. a stale `nginx-wrapper.sh`), `nginx -t` fails, the platform rolls back the conf, and app subdomains fall through to nginx's default "Welcome to nginx" page. Symptom in logs: `⚠ [proxy] nginx -t failed: ... not found`. Fix: run `which nginx` and set `NGINX_BIN` to that path (or leave it as `nginx` if nginx is on `PATH`).
 
 ## Cross-Platform Compatibility
 
