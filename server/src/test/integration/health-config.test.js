@@ -23,3 +23,10 @@ test('GET /api/config exposes appPublicUrlTemplate field', async () => {
   // unset in tests -> null
   assert.equal(res.body.data.appPublicUrlTemplate, null);
 });
+
+test('GET / returns server info JSON (non-production)', async () => {
+  const res = await request().get('/');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.name, 'Microverse Server');
+  assert.equal(res.body.status, 'running');
+});

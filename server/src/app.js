@@ -7,6 +7,8 @@ const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
 const session = require('express-session');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // Ensure the DB initializes + schema runs (idempotent CREATE TABLE IF NOT EXISTS).
 require('./db');
@@ -45,9 +47,26 @@ function createApp() {
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
   app.get('/openapi.json', (req, res) => res.json(openApiSpec));
 
-  app.get('/', (req, res) => {
-    res.json({ name: 'Microverse Server', version: '1.0.0', status: 'running' });
-  });
+  // Production: serve the built frontend (client/dist) on this same port, with
+  // an SPA fallback so deep links resolve to index.html. Dev uses Vite (5173 +
+  // proxy), so this is NODE_ENV=production only. The fallback regex excludes
+  // /api, /api-docs, /openapi.json so unknown API paths still JSON-404 via
+  // notFoundHandler.
+  if (config.server.nodeEnv === 'production') {
+    const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
+    if (fs.existsSync(clientDist)) {
+      app.use(express.static(clientDist));
+      const indexHtml = path.join(clientDist, 'index.html');
+      app.get(/^(?!\/api|\/api-docs|\/openapi\.json).*/, (req, res) => {
+        res.sendFile(indexHtml);
+      });
+    } else {
+      console.warn('⚠ client/dist not found — run `npm run build:client`. Serving API only.');
+      app.get('/', (req, res) => res.json({ name: 'Microverse Server', version: '1.0.0', status: 'running' }));
+    }
+  } else {
+    app.get('/', (req, res) => res.json({ name: 'Microverse Server', version: '1.0.0', status: 'running' }));
+  }
 
   app.use(notFoundHandler);
   app.use(errorHandler);
