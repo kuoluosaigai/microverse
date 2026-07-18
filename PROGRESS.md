@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-**版本**: v1.0.0（package.json；其后已追加文件上传、i18n、editorial UI 改版等特性，尚未打新 tag）
-**最后更新**: 2026-07-12
-**状态**: ✅ 核心功能 + 文件上传 + 双语 + editorial UI + 日志 + npm 自动 install/build/环境变量 均已完成，可用于生产（nginx 类型除外）
+**版本**: v1.0.0（package.json；其后已追加大量特性，尚未打新 tag）
+**最后更新**: 2026-07-19
+**状态**: ✅ 全部核心功能（三种部署类型 + 文件上传 + 双语 + editorial UI + 日志 + npm 自动 install/build/env + 资源监控 + 单管理员登录 + 备份/恢复 + 限流 + 平台托管 nginx 反向代理 + 生产单端口部署）均已完成，可用于生产。SSL 证书签发不做（只预留结构）。
 
 ## 已完成功能
 
@@ -92,8 +92,9 @@
 ## 当前支持的部署类型
 
 - ✅ **Static Site (http-server)** - 完全可用（自动端口分配、PM2 进程管理、启停）
-- ✅ **Node.js (npm)** - 完全可用（start 时自动 `npm install` + 可选 `npm run build`；平台分配端口并注入 `PORT`；可配置环境变量）
-- ✅ **Nginx** - 静态站可用（作为 PM2 进程 serve app 目录；需本机安装 nginx 并经 `NGINX_BIN` 或 PATH 提供）。反向代理 / SSL / 域名**不做**（超出项目定位，见 Phase 12）。
+- ✅ **Node.js (npm)** - 完全可用（start 时自动 `npm install`（含 devDependencies）+ 可选 `npm run build`；平台分配端口并注入 `PORT`；可配置环境变量）
+- ✅ **Nginx** - 静态站可用（nginx 作为 PM2 进程 serve app 目录；需本机安装 nginx 并经 `NGINX_BIN` 或 PATH 提供）
+- ✅ **平台托管反向代理**（横切特性，非部署类型；opt-in `PROXY_ENABLED`）：把每个运行中应用的子域名 `<app>.<base-domain>` 路由到其端口，并可设一个根域名默认应用；应用 start/stop/delete 及开机自动重生成 nginx conf + reload。SSL 签发**不做**（只生成 server 块形态，用户自行 certbot 后填 `PROXY_SSL_*` 路径）。
 
 ## 待实现功能
 
@@ -114,17 +115,17 @@
 - [x] 环境变量管理（`app_env` 表 + GET/PUT API + EnvModal UI + PM2 注入）
 - [x] 平台为 npm 应用分配端口并注入 `PORT`
 
-### ✅ Phase 12: Nginx 部署支持（静态站部分，2026-07-12）
+### ✅ Phase 12: Nginx 部署支持（2026-07-12 静态站；2026-07-18 反向代理 + 域名）
 - [x] Nginx 配置文件生成（静态站 server 块，pid/log 重定向到 app 目录）
 - [x] nginx 作为 PM2 进程提供静态站服务（复用端口分配 / 启停 / 日志 / 同步）
-- [ ] ~~反向代理设置（网关层）~~（不做——超出项目定位）
-- [ ] ~~SSL 证书管理~~（不做——同上）
-- [ ] ~~域名绑定~~（不做——同上）
+- [x] 平台托管反向代理（`ProxyManager`：子域名 + 根域名默认应用路由，`nginx -t`/`-s reload`，失败回滚；start/stop/delete + 开机重生成）—— 2026-07-18
+- [x] 域名绑定（子域名 `<app>.<base-domain>` + 根域名默认应用 `apps.is_default`；`APP_PUBLIC_URL_TEMPLATE` 外链）—— 2026-07-18
+- [ ] ~~SSL 证书签发~~（不做——只预留 `PROXY_SSL_*` 结构，用户自行 certbot）
 
 ### ✅ Phase 13: 应用监控（资源监控部分，2026-07-12）
 - [x] CPU/内存/运行时长监控（`MetricsSampler` 10s 采样 + 内存环形缓冲；Dashboard 行内当前值 + 独立 Metrics 页火花线）
-- [ ] ~~请求统计~~（不做——依赖已移出的反代网关层）
-- [ ] ~~错误率监控~~（不做——同上）
+- [ ] 请求统计（反代网关层已于 2026-07-18 回归；可在 ProxyManager 侧解析 access log 实现，低优先）
+- [ ] 错误率监控（同上）
 - [ ] 告警系统（需阈值规则 + 通知渠道；低优先）
 
 ### ✅ Phase 14: 用户系统（单管理员登录部分，2026-07-12）
@@ -183,22 +184,23 @@
 
 ## 下一步计划
 
-**立即任务**:
-1. ✅ 补充基础单元 / 集成测试（后端已建立：node:test + supertest 覆盖非 PM2 端点；PM2 端点仍手动）
+> 核心功能已全部闭环（三种部署类型 + 反代 + 单端口生产部署 + 鉴权 + 备份 + 监控 + 限流）。以下均为增强项，无阻塞。
 
 **短期目标**:
-1. 完善 npm 应用部署 (Phase 11) — 自动依赖安装 / 构建
-2. ✅ 添加 API 文档 (Swagger)
+1. PM2 相关端点自动化测试（目前手动）
+2. `MAX_FILE_SIZE` 默认值在 config 与 `.env.example` 间自动同步
+3. 端口探测 Windows 双栈盲区根治（`SO_EXCLUSIVEADDRUSE` 或查 OS 端口表）
 
 **中期目标**:
-1. ✅ Nginx 支持 (Phase 12，静态站部分)
-2. ✅ 应用监控仪表盘 (Phase 13，资源监控部分)
-3. 性能优化
+1. Phase 15 增项：批量操作、应用模板系统、命令行工具 (CLI)、数据库迁移系统
+2. Phase 13 延伸：请求统计 / 错误率 / 告警系统（反代网关层已就绪）
 
 **长期目标**:
-1. ✅ 用户系统 (Phase 14，单管理员登录部分)
-2. 完整测试覆盖
-3. 生产环境部署指南
+1. TypeScript 支持
+2. 数据库连接池 / Redis 缓存层
+3. WebSocket 实时更新
+4. 前端代码分割 / 懒加载
+5. 暗色（"ink"）主题变体
 
 ## 贡献者
 
