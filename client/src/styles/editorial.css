@@ -217,3 +217,21 @@
 .metrics-empty { font-family: var(--serif); font-size: 15px; color: var(--ink-3);
   text-align: center; padding: 60px 0; }
 .metrics-stale { color: var(--accent); }
+
+/* ErrorBoundary fallbacks */
+.ed-error-fallback { text-align: left; }
+.ed-error-fallback.compact { padding: 24px 0; }
+.ed-error-actions { display: flex; align-items: center; gap: 18px; }
+.ed-error-stack {
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: #F2EDE2;
+  border: 1px solid #D8CFBF;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}

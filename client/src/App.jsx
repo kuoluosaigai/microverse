@@ -9,6 +9,7 @@ import UploadFiles from './pages/UploadFiles'
 import AppLogs from './pages/AppLogs'
 import AppMetrics from './pages/AppMetrics'
 import Login from './pages/Login'
+import ErrorBoundary from './components/ErrorBoundary'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 const theme = {
@@ -53,17 +54,19 @@ function App() {
   return (
     <ConfigProvider locale={antdLocale} theme={theme}>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route element={<RequireAuth />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/create" element={<CreateApp />} />
-            <Route path="/apps/:id/upload" element={<UploadFiles />} />
-            <Route path="/apps/:id/logs" element={<AppLogs />} />
-            <Route path="/apps/:id/metrics" element={<AppMetrics />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route element={<RequireAuth />}>
+              <Route path="/" element={<ErrorBoundary compact><Dashboard /></ErrorBoundary>} />
+              <Route path="/create" element={<ErrorBoundary compact><CreateApp /></ErrorBoundary>} />
+              <Route path="/apps/:id/upload" element={<ErrorBoundary compact><UploadFiles /></ErrorBoundary>} />
+              <Route path="/apps/:id/logs" element={<ErrorBoundary compact><AppLogs /></ErrorBoundary>} />
+              <Route path="/apps/:id/metrics" element={<ErrorBoundary compact><AppMetrics /></ErrorBoundary>} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </AuthProvider>
     </ConfigProvider>
   )

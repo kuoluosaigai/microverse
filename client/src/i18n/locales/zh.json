@@ -16,6 +16,12 @@
     "error": "错误",
     "warning": "警告"
   },
+  "errorBoundary": {
+    "title": "出错了",
+    "description": "页面渲染时发生错误，请尝试刷新。",
+    "reload": "刷新",
+    "back": "返回仪表板"
+  },
   "auth": {
     "loginTitle": "登录",
     "loginLead": "管理员登录以管理应用",

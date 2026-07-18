@@ -16,6 +16,12 @@
     "error": "Error",
     "warning": "Warning"
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "description": "This page hit an error while rendering. Try reloading.",
+    "reload": "Reload",
+    "back": "Back to dashboard"
+  },
   "auth": {
     "loginTitle": "Sign in",
     "loginLead": "Admin sign-in to manage apps",
