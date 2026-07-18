@@ -529,11 +529,21 @@ router.post('/apps/:id/upload', async (req, res, next) => {
 
             // If the zip wrapped everything in a single top-level folder
             // (common with GitHub/IDE zips), hoist its contents up one level
-            // so index.html etc. land directly under the app directory.
-            flattenSingleTopDir(app.path);
+            // so index.html etc. land directly under the app directory. Returns
+            // the wrapper name when it flattened (used below), or null otherwise.
+            const flattenedWrapper = flattenSingleTopDir(app.path);
 
-            // Get list of extracted files
-            const extractedFiles = entries.map(entry => entry.entryName);
+            // Reported file names should match the on-disk paths. When a wrapper
+            // was flattened, strip its prefix and drop the wrapper dir entry
+            // itself (which collapses to ''). Otherwise the list is the entry
+            // names verbatim.
+            let extractedFiles = entries.map(entry => entry.entryName);
+            if (flattenedWrapper) {
+              const prefix = flattenedWrapper + '/';
+              extractedFiles = extractedFiles
+                .map(name => name.startsWith(prefix) ? name.slice(prefix.length) : name)
+                .filter(name => name.length > 0);
+            }
             uploadedFiles.push(...extractedFiles);
 
             // Delete the ZIP file after extraction

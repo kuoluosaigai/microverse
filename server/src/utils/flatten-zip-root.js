@@ -10,25 +10,27 @@ const path = require('path');
  *
  * Safe by construction: we only act when `dir`'s sole entry is the wrapper, so
  * there is nothing else at the top level to collide with during the hoist.
+ *
  * @param {string} dir absolute directory path
- * @returns {boolean} true if a wrapper was flattened
+ * @returns {string|null} the wrapper folder name if one was flattened, else null
  */
 function flattenSingleTopDir(dir) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (_e) {
-    return false;
+    return null;
   }
-  if (entries.length !== 1 || !entries[0].isDirectory()) return false;
+  if (entries.length !== 1 || !entries[0].isDirectory()) return null;
 
-  const wrapper = path.join(dir, entries[0].name);
+  const wrapperName = entries[0].name;
+  const wrapper = path.join(dir, wrapperName);
   const children = fs.readdirSync(wrapper, { withFileTypes: true });
   for (const child of children) {
     fs.renameSync(path.join(wrapper, child.name), path.join(dir, child.name));
   }
   fs.rmdirSync(wrapper); // empty now
-  return true;
+  return wrapperName;
 }
 
 module.exports = { flattenSingleTopDir };
