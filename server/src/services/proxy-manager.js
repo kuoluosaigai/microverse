@@ -82,13 +82,17 @@ function renderProxyConfig(apps, opts) {
   const { baseDomain, ssl } = opts;
   validateBaseDomain(baseDomain);
 
+  // Coerce port to a safe integer and skip apps whose port isn't a finite
+  // positive integer — guards against a theoretical string-injection vector
+  // from a manually-edited DB. Uses the coerced port (not a.port) downstream.
   const running = apps
-    .filter(a => a.status === 'running' && a.port)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .map(a => ({ a, port: Math.floor(Number(a.port)) }))
+    .filter(({ a, port }) => a.status === 'running' && Number.isFinite(port) && port > 0)
+    .sort(({ a: x }, { a: y }) => x.name.localeCompare(y.name));
 
-  const blocks = running.map(a => renderServerBlock(`${a.name}.${baseDomain}`, a.port, ssl));
+  const blocks = running.map(({ a, port }) => renderServerBlock(`${a.name}.${baseDomain}`, port, ssl));
 
-  const def = running.find(a => a.is_default);
+  const def = running.find(({ a }) => a.is_default);
   if (def) {
     blocks.push(renderServerBlock(`${baseDomain} www.${baseDomain}`, def.port, ssl));
   }
@@ -147,6 +151,12 @@ async function regenerate(scope = {}) {
   const bin = config.deployment.proxyReloadBinary;
   const EXEC_OPTS = { timeout: 15000, maxBuffer: 1024 * 1024 };
 
+  // Snapshot the prior conf (if any) so we can roll back if `nginx -t` rejects
+  // the new render — a broken conf on disk would be loaded by the next nginx
+  // restart. Best-effort read; absence is fine.
+  let prior = null;
+  try { prior = fs.readFileSync(confFile, 'utf-8'); } catch (_e) { /* no prior file */ }
+
   try {
     const dir = path.dirname(confFile);
     fs.mkdirSync(dir, { recursive: true });
@@ -163,6 +173,13 @@ async function regenerate(scope = {}) {
   try {
     await execFn(`"${bin}" -t`, EXEC_OPTS);
   } catch (err) {
+    // Roll back the on-disk conf so a broken render can't survive a future
+    // nginx restart. Best-effort: this must never throw out of the catch.
+    if (prior !== null) {
+      try { fs.writeFileSync(confFile, prior, 'utf-8'); } catch (_e) { /* ignore */ }
+    } else {
+      try { fs.unlinkSync(confFile); } catch (_e) { /* ignore */ }
+    }
     const msg = binError(bin, err, 'nginx -t failed');
     console.warn(`⚠ [proxy] ${msg} — config NOT reloaded.`);
     return { ok: false, reason: 'test-failed', message: msg };
