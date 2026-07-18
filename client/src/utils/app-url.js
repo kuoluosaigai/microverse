@@ -10,7 +10,11 @@
 export function buildAppUrl(app, template) {
   if (!template || !template.includes('{name}')) return null
   try {
-    return new URL(template.replace('{name}', app.name)).toString()
+    const url = new URL(template.replace('{name}', app.name))
+    // Only http/https — reject javascript:/data:/etc. even though the template
+    // is admin-controlled, so this helper stays safe to reuse.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.toString()
   } catch (_e) {
     return null
   }
