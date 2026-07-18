@@ -2,6 +2,8 @@
 
 > Deploy and manage your micro applications with ease
 
+**Languages:** [English](README.md) | [中文](README.zh-CN.md)
+
 A web-based platform for deploying and managing micro applications. Create, upload, and deploy multiple small web applications with different runtime environments (npm, http-server, nginx) through a single web interface — so the long tail of one-off static sites and tiny Node services has one home instead of a dozen half-forgotten ports.
 
 ## Features
