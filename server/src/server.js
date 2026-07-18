@@ -4,6 +4,7 @@ const { dbReady } = require('./db');
 const NginxLifecycle = require('./services/nginx-lifecycle');
 const metricsSampler = require('./services/metrics-sampler');
 const AuthManager = require('./services/auth-manager');
+const ProxyManager = require('./services/proxy-manager');
 
 const app = createApp();
 
@@ -27,7 +28,19 @@ const server = app.listen(config.server.port, config.server.host, () => {
 
   metricsSampler.start();
 
-  dbReady.then(() => AuthManager.ensureAdmin()).catch(err => console.warn(`ensureAdmin failed: ${err.message}`));
+  dbReady.then(async () => {
+    await AuthManager.ensureAdmin();
+    // Sync the reverse-proxy conf with currently-running apps on every boot.
+    // Otherwise toggling PROXY_ENABLED (or a platform restart) leaves the conf
+    // stale/empty until the next app start/stop — and subdomains fall through to
+    // nginx's default server. No-op + warning when disabled or nginx is absent.
+    const r = await ProxyManager.regenerate();
+    if (config.deployment.proxyEnabled && r.ok && !r.skipped) {
+      console.log('✓ Reverse-proxy config regenerated');
+    } else if (config.deployment.proxyEnabled && !r.ok) {
+      console.warn('⚠ Reverse-proxy not active: ' + (r.message || r.reason));
+    }
+  }).catch(err => console.warn(`boot init failed: ${err.message}`));
 });
 
 function shutdown() {
