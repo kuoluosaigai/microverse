@@ -208,6 +208,16 @@
 
 ## 变更日志
 
+### [Unreleased] — 2026-07-18 (domain deploy hardening)
+#### 新增
+- ZIP 自动去顶层目录：上传解压后若只有一个顶层文件夹则抬层（`utils/flatten-zip-root.js`），解决"zip 多套一层目录导致 index.html 校验失败"。
+- 子域名外链：`APP_PUBLIC_URL_TEMPLATE`（如 `https://{name}.yourdomain.com`）经 `/api/config` 下发；前端 `AppConfigContext` + `buildAppUrl()`（`new URL()` 校验，失败退回 localhost）。
+- 后端生产模式托管前端：`NODE_ENV=production` 时 `app.js` 挂 `express.static(client/dist)` + SPA fallback（排除 `/api` 等），单端口同吐 API+UI（替代此前未提交的 openclaw 补丁）。
+- 提交真实 `server/ecosystem.config.js`（PM2 cluster 模式），`npm run pm2:start` 开箱即用。
+- 中文 README（`README.zh-CN.md`）+ 顶部语言切换。
+#### 文档
+- README 重写"生产部署"段（单端口 + 反代）、新增"更新已部署实例"章节（`git pull` → 按需 `install:all`/`build:client` → `pm2 reload`；丢弃本地 app.js 补丁指引）。
+
 ### [Unreleased] — 2026-07-18
 #### 技术债清扫
 - 应用名校验：新增 `utils/validate-app-name.js`（`^[A-Za-z0-9_-]{1,64}$`），在 `AppManager.createApp`（覆盖 POST /apps 与 restore）+ `validateManifest` 强制；前端 CreateApp 加 64 字符上限。堵路径穿越/配置注入面（SQL 注入为伪命题——查询全参数化）。
