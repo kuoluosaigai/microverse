@@ -58,6 +58,17 @@ body {
   box-shadow: none !important;
 }
 
+/* Input.Password renders an inner .ant-input inside .ant-input-affix-wrapper.
+   Both match the underline rule above, so the password field shows two lines.
+   Strip the border from the wrapped inner input only — a plain <Input> has no
+   affix-wrapper and keeps its single underline. */
+.ant-input-affix-wrapper > .ant-input,
+.ant-input-affix-wrapper input.ant-input {
+  border: none !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+
 /* Select: hairline underline */
 .ant-select .ant-select-selector {
   background: transparent !important;
