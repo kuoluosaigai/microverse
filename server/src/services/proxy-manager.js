@@ -5,6 +5,9 @@ const util = require('util');
 
 const execPromise = util.promisify(exec);
 
+const config = require('../config');
+const { queries } = require('../db');
+
 const HEADER = '# Managed by Microverse — do not edit by hand; regenerated on app lifecycle.';
 
 /**
@@ -94,4 +97,86 @@ function renderProxyConfig(apps, opts) {
   return HEADER + '\n' + blocks.join('\n\n') + '\n';
 }
 
-module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain };
+function binError(bin, err, lead) {
+  if (err.code === 'ENOENT' || /command not found|not recognized|127/.test(err.message || '')) {
+    return `nginx binary not found ('${bin}')`;
+  }
+  return `${lead}: ${(err.stderr || err.stdout || err.message || '').trim().slice(-400)}`;
+}
+
+/**
+ * Regenerate the managed edge-proxy conf from all apps, then test + reload nginx.
+ * Never throws: every failure is caught and returned as { ok:false } + warning,
+ * so app start/stop/delete are never blocked by a proxy problem.
+ *
+ * @param {{ execFn?: (cmd:string, opts:object) => Promise<{stdout:string,stderr:string}> }} scope
+ * @returns {Promise<{ok:boolean, skipped?:boolean, reason?:string, message?:string}>}
+ */
+async function regenerate(scope = {}) {
+  const execFn = scope.execFn || ((cmd, opts) => execPromise(cmd, opts));
+
+  if (!config.deployment.proxyEnabled) {
+    return { ok: true, skipped: true, reason: 'disabled' };
+  }
+
+  const baseDomain = resolveBaseDomain({
+    proxyBaseDomain: config.deployment.proxyBaseDomain,
+    appPublicUrlTemplate: config.deployment.appPublicUrlTemplate
+  });
+  if (!baseDomain) {
+    console.warn('⚠ [proxy] PROXY_ENABLED but no base domain (set PROXY_BASE_DOMAIN or APP_PUBLIC_URL_TEMPLATE). Skipping.');
+    return { ok: false, skipped: true, reason: 'no-base-domain' };
+  }
+
+  const ssl = {
+    enabled: config.deployment.proxySslEnabled,
+    cert: config.deployment.proxySslCert,
+    key: config.deployment.proxySslCertKey
+  };
+
+  let conf;
+  try {
+    const apps = await queries.getAllApps();
+    conf = renderProxyConfig(apps, { baseDomain, ssl });
+  } catch (err) {
+    console.warn(`⚠ [proxy] render failed: ${err.message}`);
+    return { ok: false, reason: 'render-failed', message: err.message };
+  }
+
+  const confFile = config.deployment.proxyConfFile;
+  const bin = config.deployment.proxyReloadBinary;
+  const EXEC_OPTS = { timeout: 15000, maxBuffer: 1024 * 1024 };
+
+  try {
+    const dir = path.dirname(confFile);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = confFile + '.tmp';
+    fs.writeFileSync(tmp, conf.endsWith('\n') ? conf : conf + '\n', 'utf-8');
+    fs.renameSync(tmp, confFile); // atomic replace
+  } catch (err) {
+    console.warn(`⚠ [proxy] could not write ${confFile}: ${err.message}`);
+    return { ok: false, reason: 'write-failed', message: err.message };
+  }
+
+  // `nginx -t` validates the ENTIRE main config (incl. our include), not just
+  // our file — so a bad vhost anywhere still blocks reload. Never reload on fail.
+  try {
+    await execFn(`"${bin}" -t`, EXEC_OPTS);
+  } catch (err) {
+    const msg = binError(bin, err, 'nginx -t failed');
+    console.warn(`⚠ [proxy] ${msg} — config NOT reloaded.`);
+    return { ok: false, reason: 'test-failed', message: msg };
+  }
+
+  try {
+    await execFn(`"${bin}" -s reload`, EXEC_OPTS);
+  } catch (err) {
+    const msg = binError(bin, err, 'nginx reload failed');
+    console.warn(`⚠ [proxy] ${msg}`);
+    return { ok: false, reason: 'reload-failed', message: msg };
+  }
+
+  return { ok: true };
+}
+
+module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain, regenerate };

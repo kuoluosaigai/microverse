@@ -55,6 +55,18 @@ const config = {
     // http://localhost:<port> (local dev).
     appPublicUrlTemplate: process.env.APP_PUBLIC_URL_TEMPLATE || '',
 
+    // Reverse-proxy: platform-managed nginx edge config (opt-in). When enabled,
+    // the app regenerates <proxyConfFile> from all running apps and reloads
+    // nginx. See docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md.
+    proxyEnabled: process.env.PROXY_ENABLED === 'true',
+    proxyConfFile: process.env.PROXY_CONF_FILE || '/etc/nginx/conf.d/microverse_apps.conf',
+    proxyBaseDomain: process.env.PROXY_BASE_DOMAIN || '',
+    proxyReloadBinary: process.env.NGINX_BIN || 'nginx',
+    // SSL structure reservation (v1 does NOT issue certs):
+    proxySslEnabled: process.env.PROXY_SSL_ENABLED === 'true',
+    proxySslCert: process.env.PROXY_SSL_CERT || '',
+    proxySslCertKey: process.env.PROXY_SSL_CERT_KEY || '',
+
     // metrics sampler (resource monitoring): PM2 poll interval + ring-buffer cap
     metricsIntervalMs: parseInt(process.env.METRICS_INTERVAL_MS) || 10000,
     metricsMaxSamples: parseInt(process.env.METRICS_MAX_SAMPLES) || 180
@@ -69,7 +81,8 @@ const config = {
   auth: {
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
     adminPassword: process.env.ADMIN_PASSWORD || '',
-    sessionSecret: process.env.SESSION_SECRET || ''
+    sessionSecret: process.env.SESSION_SECRET || '',
+    sessionCookieSecure: process.env.SESSION_COOKIE_SECURE === 'true'
   }
 };
 
