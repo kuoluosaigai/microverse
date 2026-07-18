@@ -83,6 +83,13 @@ const config = {
     adminPassword: process.env.ADMIN_PASSWORD || '',
     sessionSecret: process.env.SESSION_SECRET || '',
     sessionCookieSecure: process.env.SESSION_COOKIE_SECURE === 'true'
+  },
+
+  // Session store: a shared sqlite file so sessions are visible to every PM2
+  // cluster worker and survive restarts. express-session's default MemoryStore
+  // is per-process, which causes intermittent 401s under cluster mode.
+  session: {
+    dbPath: process.env.SESSION_DB_PATH || path.join(__dirname, '../../..', 'data', 'sessions.sqlite')
   }
 };
 

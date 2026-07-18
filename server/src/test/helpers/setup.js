@@ -8,6 +8,7 @@ const tmpRoot = path.join(os.tmpdir(), `microverse-test-${process.pid}`);
 fs.mkdirSync(path.join(tmpRoot, 'db'), { recursive: true });
 fs.mkdirSync(path.join(tmpRoot, 'apps'), { recursive: true });
 process.env.DB_PATH = process.env.DB_PATH || path.join(tmpRoot, 'db', 'test.sqlite');
+process.env.SESSION_DB_PATH = process.env.SESSION_DB_PATH || path.join(tmpRoot, 'db', 'test-sessions.sqlite');
 process.env.APPS_DIR = process.env.APPS_DIR || path.join(tmpRoot, 'apps');
 process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'test-pass';

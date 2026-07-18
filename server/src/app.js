@@ -6,12 +6,22 @@ const routes = require('./routes');
 const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
 const session = require('express-session');
+const sqlite3 = require('sqlite3');
+const SQLiteStore = require('connect-sqlite3')(session);
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 // Ensure the DB initializes + schema runs (idempotent CREATE TABLE IF NOT EXISTS).
 require('./db');
+
+// Shared persistent session store (sqlite). Created once at module load so the
+// sessions table is ready before any request, and so every createApp() instance
+// in a process shares one connection. Under PM2 cluster each worker opens its
+// own connection to this same file -> sessions are visible across workers and
+// survive restarts (MemoryStore is per-process and caused intermittent 401s).
+fs.mkdirSync(path.dirname(config.session.dbPath), { recursive: true });
+const sessionStore = new SQLiteStore({ db: new sqlite3.Database(config.session.dbPath) });
 
 /**
  * Build the Express app WITHOUT listening or bootstrapping background work.
@@ -26,7 +36,7 @@ function createApp() {
 
   const sessionSecret = config.auth.sessionSecret || crypto.randomBytes(32).toString('hex');
   if (!config.auth.sessionSecret) {
-    console.warn('⚠ SESSION_SECRET not set — using a random ephemeral secret (sessions invalidate on restart). Set SESSION_SECRET in .env for stable sessions.');
+    console.warn('⚠ SESSION_SECRET not set — using a random ephemeral secret. Sessions will not survive restarts, and under PM2 cluster each worker signs with a different key (intermittent logouts/401s). Set SESSION_SECRET in .env.');
   }
   // Trust exactly one reverse-proxy layer so req.ip / req.protocol reflect the
   // real client behind the edge nginx (and so X-Forwarded-Proto drives secure
@@ -35,6 +45,7 @@ function createApp() {
   const sessionCookieSecure = config.auth.sessionCookieSecure
     || (config.deployment.proxySslEnabled && config.server.nodeEnv === 'production');
   app.use(session({
+    store: sessionStore,
     secret: sessionSecret,
     resave: true,             // rolling renewal requires resave
     saveUninitialized: false,

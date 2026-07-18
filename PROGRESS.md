@@ -208,6 +208,12 @@
 
 ## 变更日志
 
+### [Unreleased] — 2026-07-18 (cluster session store)
+#### 修复
+- PM2 cluster 多 worker 下偶发 401 "Authentication required"（含上传文件、刷新偶发跳登录页）：根因是 express-session 默认 MemoryStore 每进程一份内存、worker 间不共享。改用 connect-sqlite3（复用现有 sqlite3 驱动）的共享持久 session store（`SESSION_DB_PATH`，默认 `data/sessions.sqlite`）——session 跨 worker 可见，且重启不丢。
+- 强调：cluster 下 `SESSION_SECRET` **必须**设置，否则每个 worker 用不同随机密钥签名、互相拒绝 cookie（同样会偶发 401）。启动告警与 `.env.example` 已补充该说明。
+- 新增集成测试：跨 app 实例（模拟多 worker）共享 session（旧 MemoryStore 下失败、新 store 下通过）。
+
 ### [Unreleased] — 2026-07-18 (nginx reverse proxy + session hardening)
 #### 新增
 - 平台托管 nginx 反向代理（opt-in via `PROXY_ENABLED`）：平台把每个运行中应用的子域名路由（`<app>.<base-domain>` → 应用端口）写入 `PROXY_CONF_FILE` 并 `nginx -s reload`；应用 start/stop/delete 自动重生成。设计文档：[docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md](docs/superpowers/specs/2026-07-18-nginx-reverse-proxy-design.md)。
