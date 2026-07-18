@@ -5,7 +5,7 @@ import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles, backupAppUrl } from '../api/apps'
 import { useAppConfig } from '../context/AppConfigContext'
-import { buildAppUrl } from '../utils/app-url'
+import { buildAppUrl, buildRootUrl } from '../utils/app-url'
 import EnvModal from './EnvModal'
 
 function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, startingId }) {
@@ -35,7 +35,12 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
 
   const openPort = () => {
     if (!app.port || !isRunning) return
-    const url = buildAppUrl(app, appConfig?.appPublicUrlTemplate) || `http://localhost:${app.port}`
+    // The root-domain default app opens at the base domain (e.g. yourdomain.com),
+    // not its {name} subdomain — matches what the reverse proxy actually serves.
+    const rootUrl = app.is_default && appConfig?.proxyEnabled
+      ? buildRootUrl({ template: appConfig?.appPublicUrlTemplate, proxyBaseDomain: appConfig?.proxyBaseDomain })
+      : null
+    const url = rootUrl || buildAppUrl(app, appConfig?.appPublicUrlTemplate) || `http://localhost:${app.port}`
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
