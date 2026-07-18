@@ -55,6 +55,15 @@ function createApp() {
   if (config.server.nodeEnv === 'production') {
     const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
     if (fs.existsSync(clientDist)) {
+      // Vite emits content-hashed assets under /assets/ — a given filename
+      // never changes, so cache them a year + immutable. index.html and root
+      // files (favicon etc.) stay on the default revalidate (max-age=0) so
+      // clients pick up new builds immediately.
+      const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
+      app.use('/assets', express.static(path.join(clientDist, 'assets'), {
+        maxAge: ONE_YEAR_MS,
+        immutable: true,
+      }));
       app.use(express.static(clientDist));
       const indexHtml = path.join(clientDist, 'index.html');
       app.get(/^(?!\/api|\/api-docs|\/openapi\.json).*/, (req, res) => {
