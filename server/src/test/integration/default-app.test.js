@@ -40,3 +40,23 @@ test('updateApp clears is_default via COALESCE', async () => {
   const rows = await queries.getAllApps();
   assert.equal(rows.find(r => r.id === a.lastID).is_default, 0);
 });
+
+const AppManager = require('../../services/app-manager');
+
+test('deleteApp triggers a proxy regenerate', async () => {
+  await init();
+  const a = await queries.createApp({ name: 'del-hook', path: '/tmp/dh', deploy_type: 'http-server', port: null, status: 'stopped' });
+  const ProxyManager = require('../../services/proxy-manager');
+  const orig = ProxyManager.regenerate;
+  let called = false;
+  ProxyManager.regenerate = async () => { called = true; return { ok: true }; };
+  try {
+    await AppManager.deleteApp(a.lastID);
+    assert.equal(called, true, 'regenerate called on delete');
+    // app actually gone from DB
+    const rows = await queries.getAllApps();
+    assert.ok(!rows.some(r => r.id === a.lastID));
+  } finally {
+    ProxyManager.regenerate = orig;
+  }
+});

@@ -2,6 +2,7 @@ const { queries } = require('../db');
 const pathHelper = require('../utils/path-helper');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
+const ProxyManager = require('./proxy-manager');
 const { isValidAppName } = require('../utils/validate-app-name');
 const fs = require('fs');
 const path = require('path');
@@ -119,6 +120,8 @@ class AppManager {
 
     // Delete from database
     await queries.deleteApp(id);
+
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after delete failed: ${e.message}`); }
 
     // Note: We don't delete the app directory to prevent data loss
     // User should manually delete if needed

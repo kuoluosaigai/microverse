@@ -2,6 +2,7 @@ const AppManager = require('./app-manager');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
 const NginxLifecycle = require('./nginx-lifecycle');
+const ProxyManager = require('./proxy-manager');
 const { queries } = require('../db');
 const config = require('../config');
 const { createExclusive } = require('../utils/serialize');
@@ -76,6 +77,10 @@ class DeployManager {
     // Update status in database
     await queries.updateAppStatus('running', appId);
 
+    // Best-effort: refresh the edge-proxy routes so this app's subdomain is
+    // reachable. Never let a proxy problem block the deploy.
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+
     return AppManager.getAppById(appId);
   }
 
@@ -95,6 +100,8 @@ class DeployManager {
 
     // Update status in database
     await queries.updateAppStatus('stopped', appId);
+
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after stop failed: ${e.message}`); }
 
     return AppManager.getAppById(appId);
   }
