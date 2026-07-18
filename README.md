@@ -89,22 +89,68 @@ npm run dev:client  # Frontend on http://localhost:5173
 
 ### Production Deployment
 
+In production the backend serves both the API and the built frontend UI from a
+single port, so you only need to reverse-proxy that one port to your domain.
+
 1. Build the frontend:
 ```bash
 npm run build:client
 ```
 
-2. Start the backend with PM2:
+2. Set production env in your `.env` (at minimum):
+```env
+NODE_ENV=production
+PORT=5000                            # the port your reverse proxy targets
+SESSION_SECRET=<long random string>  # stable across restarts (else sessions reset)
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<initial password>    # bcrypt-hashed on first boot, then ignored
+```
+
+3. Run the backend — with `NODE_ENV=production` it also serves `client/dist`:
 ```bash
+# directly
+npm run start:server
+
+# or under PM2 (cluster mode, zero-downtime reloads)
 cd server
 npm run pm2:start
 ```
 
-3. Monitor the application:
+4. Put a reverse proxy (nginx/caddy/…) in front of `:<PORT>` for your domain
+   (TLS termination; and if you expose deployed apps under subdomains, map each
+   app subdomain to its assigned port). The proxy is your infrastructure;
+   Microverse does not manage it.
+
+> To make deployed-app **Open** links use your domain instead of `localhost`,
+> set `APP_PUBLIC_URL_TEMPLATE` (see [Configuration](#configuration)).
+
+### Updating an existing deployment
+
+`data/*.sqlite` (apps, env, admin account) and `apps/` (deployed app files) are
+gitignored, and the DB schema self-heals on boot (`CREATE TABLE IF NOT EXISTS`),
+so updates never lose data and need no migration step.
+
 ```bash
-cd server
-npm run pm2:logs
+git pull origin main
+
+# only if dependencies changed in this update:
+npm run install:all
+
+# only if the frontend changed in this update:
+npm run build:client
+
+# reload the backend (PM2 cluster mode = zero downtime):
+pm2 reload microverse-server
+# (or restart however you run it)
 ```
+
+Already-running deployed apps (the http-server/nginx/npm processes PM2 manages)
+keep running through the platform update.
+
+> **If you previously hand-edited `server/src/app.js` to serve the frontend**
+> (e.g. via an automated deployment tool), the repo now does that officially.
+> Drop your local patch before pulling so it doesn't conflict:
+> `git checkout -- server/src/app.js` then `git pull`.
 
 ## Usage
 
@@ -221,6 +267,9 @@ APP_PORT_MAX=9000
 # File upload limits
 MAX_FILE_SIZE=104857600  # 100MB in bytes
 MAX_FILES=100
+
+# Deployed-app "Open" link template ({name} -> app name); unset -> http://localhost:<port>
+# APP_PUBLIC_URL_TEMPLATE=https://{name}.yourdomain.com
 
 # npm install / build timeouts (ms, default 300000)
 NPM_INSTALL_TIMEOUT_MS=300000
