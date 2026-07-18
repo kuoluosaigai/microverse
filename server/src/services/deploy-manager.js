@@ -4,6 +4,12 @@ const NpmLifecycle = require('./npm-lifecycle');
 const NginxLifecycle = require('./nginx-lifecycle');
 const { queries } = require('../db');
 const config = require('../config');
+const { createExclusive } = require('../utils/serialize');
+
+// Serializes the port-allocation critical section across concurrent deployApp
+// calls so two never read the same "claimed" set and pick the same port.
+// Process-local: sufficient for the single-instance, single-admin deployment.
+const exclusive = createExclusive();
 
 /**
  * Deployment Manager Service
@@ -32,14 +38,20 @@ class DeployManager {
     // npm apps receive it via the PORT env var (resolved below). Exclude ports
     // already claimed by other apps so two apps never share a port.
     if (!app.port) {
-      const claimed = (await queries.getAllClaimedPorts()).map(r => r.port);
-      const port = await ProcessManager.findAvailablePort(
-        config.deployment.portRangeMin,
-        config.deployment.portRangeMax,
-        { exclude: claimed }
-      );
-      await AppManager.updateApp(appId, { port });
-      app.port = port;
+      // Serialize the read-claimed -> pick -> write critical section. Two
+      // concurrent starts can no longer pick the same free port. npm
+      // install / build / startProcess stay outside the lock — they don't
+      // contend on port selection and can be slow.
+      app.port = await exclusive(async () => {
+        const claimed = (await queries.getAllClaimedPorts()).map(r => r.port);
+        const port = await ProcessManager.findAvailablePort(
+          config.deployment.portRangeMin,
+          config.deployment.portRangeMax,
+          { exclude: claimed }
+        );
+        await AppManager.updateApp(appId, { port });
+        return port;
+      });
     }
 
     // Start the process. For npm: install → build → resolve env → launch with env.
