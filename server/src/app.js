@@ -28,11 +28,23 @@ function createApp() {
   if (!config.auth.sessionSecret) {
     console.warn('⚠ SESSION_SECRET not set — using a random ephemeral secret (sessions invalidate on restart). Set SESSION_SECRET in .env for stable sessions.');
   }
+  // Trust exactly one reverse-proxy layer so req.ip / req.protocol reflect the
+  // real client behind the edge nginx (and so X-Forwarded-Proto drives secure
+  // cookies correctly).
+  app.set('trust proxy', 1);
+  const sessionCookieSecure = config.auth.sessionCookieSecure
+    || (config.deployment.proxySslEnabled && config.server.nodeEnv === 'production');
   app.use(session({
     secret: sessionSecret,
-    resave: false,
+    resave: true,             // rolling renewal requires resave
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 }
+    rolling: true,            // refresh the cookie on every response -> active sessions stay alive
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: sessionCookieSecure,
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    }
   }));
 
   if (config.server.nodeEnv === 'development') {
