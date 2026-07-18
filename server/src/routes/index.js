@@ -428,7 +428,7 @@ router.get('/apps/:id/logs/stream', async (req, res, next) => {
   req.on('error', cleanup);
 
   try {
-    const paths = await LogManager.getLogPaths(app.name);
+    const paths = await LogManager.getLogPaths(app);
 
     // If the client disconnected during the await above, cleanup already ran
     // (cleaned === true). Bail before creating any tailers/heartbeat — Node is

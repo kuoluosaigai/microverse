@@ -13,13 +13,27 @@ const execPromise = util.promisify(exec);
  */
 class LogManager {
   /**
-   * Resolve the PM2 out/error log file paths for an app.
-   * Reads the real paths from `pm2 jlist`; falls back to PM2's default
-   * ~/.pm2/logs/<name>-{out,error}.log when the file exists there.
+   * Resolve log file paths for an app.
+   *  - nginx apps: the per-app nginx-access.log / nginx-error.log in the app
+   *    dir (nginx writes there because its install prefix isn't writable).
+   *  - other apps: PM2's out/err paths via `pm2 jlist`, falling back to
+   *    ~/.pm2/logs/<name>-{out,error}.log when the file exists there.
    * Returns { outPath, errPath } where either may be null (no file yet).
    * Never throws for "no logs".
+   *
+   * @param {{name:string, deploy_type:string, path:string}} app
    */
-  static async getLogPaths(appName) {
+  static async getLogPaths(app) {
+    if (app.deploy_type === 'nginx') {
+      const access = path.join(app.path, 'nginx-access.log');
+      const error = path.join(app.path, 'nginx-error.log');
+      return {
+        outPath: fs.existsSync(access) ? access : null,
+        errPath: fs.existsSync(error) ? error : null,
+      };
+    }
+
+    const appName = app.name;
     try {
       const { stdout } = await execPromise('pm2 jlist');
       const processes = JSON.parse(stdout);
