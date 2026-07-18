@@ -15,6 +15,7 @@ const { requireAuth } = require('../middleware/auth');
 const { loginLimiter, apiLimiter } = require('../middleware/rate-limit');
 const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
+const { flattenSingleTopDir } = require('../utils/flatten-zip-root');
 
 /**
  * API Routes
@@ -524,6 +525,11 @@ router.post('/apps/:id/upload', async (req, res, next) => {
             }
 
             zip.extractAllTo(app.path, true);
+
+            // If the zip wrapped everything in a single top-level folder
+            // (common with GitHub/IDE zips), hoist its contents up one level
+            // so index.html etc. land directly under the app directory.
+            flattenSingleTopDir(app.path);
 
             // Get list of extracted files
             const extractedFiles = entries.map(entry => entry.entryName);
