@@ -16,6 +16,8 @@ const { loginLimiter, apiLimiter } = require('../middleware/rate-limit');
 const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenSingleTopDir } = require('../utils/flatten-zip-root');
+const { queries } = require('../db');
+const ProxyManager = require('../services/proxy-manager');
 
 /**
  * API Routes
@@ -42,7 +44,9 @@ router.get('/config', (req, res) => {
         maxFileSize: config.deployment.maxFileSize,
         maxFiles: config.deployment.maxFiles
       },
-      appPublicUrlTemplate: config.deployment.appPublicUrlTemplate || null
+      appPublicUrlTemplate: config.deployment.appPublicUrlTemplate || null,
+      proxyEnabled: !!config.deployment.proxyEnabled,
+      proxyBaseDomain: config.deployment.proxyBaseDomain || null
     }
   });
 });
@@ -617,6 +621,37 @@ router.put('/apps/:id/env', async (req, res, next) => {
         success: false,
         error: { message: error.message }
       });
+    }
+    next(error);
+  }
+});
+
+// Set this app as the root-domain default (reverse proxy). Single-default:
+// clears any other app's flag first, then regenerates the edge config.
+router.put('/apps/:id/default', async (req, res, next) => {
+  try {
+    await AppManager.getAppById(req.params.id); // 404 if missing
+    const app = await queries.setDefaultApp(Number(req.params.id));
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after set-default failed: ${e.message}`); }
+    res.json({ success: true, data: app });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+// Clear this app's root-domain default, then regenerate.
+router.delete('/apps/:id/default', async (req, res, next) => {
+  try {
+    await AppManager.getAppById(req.params.id);
+    await queries.updateApp({ id: Number(req.params.id), is_default: 0 });
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after clear-default failed: ${e.message}`); }
+    res.json({ success: true, data: { message: 'Default cleared' } });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({ success: false, error: { message: error.message } });
     }
     next(error);
   }
