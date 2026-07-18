@@ -46,6 +46,7 @@
     "appNamePlaceholder": "my-app",
     "appNameRequired": "请输入应用名称",
     "appNamePattern": "只允许字母、数字、横线和下划线",
+    "appNameTooLong": "应用名称不能超过 64 个字符",
     "deployType": "部署类型",
     "deployTypeRequired": "请选择部署类型",
     "staticSite": "静态网站 (http-server)",

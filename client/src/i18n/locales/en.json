@@ -46,6 +46,7 @@
     "appNamePlaceholder": "my-app",
     "appNameRequired": "Please enter an application name",
     "appNamePattern": "Only alphanumeric, dash, and underscore allowed",
+    "appNameTooLong": "App name must be 64 characters or fewer",
     "deployType": "Deployment Type",
     "deployTypeRequired": "Please select a deployment type",
     "staticSite": "Static Site (http-server)",

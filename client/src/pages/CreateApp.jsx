@@ -48,6 +48,7 @@ function CreateApp() {
           rules={[
             { required: true, message: t('createApp.appNameRequired') },
             { pattern: /^[a-zA-Z0-9-_]+$/, message: t('createApp.appNamePattern') },
+            { max: 64, message: t('createApp.appNameTooLong') },
           ]}
         >
           <Input placeholder={t('createApp.appNamePlaceholder')} />

@@ -1,4 +1,4 @@
-const NAME_RE = /^[a-zA-Z0-9-_]+$/;
+const { isValidAppName } = require('./validate-app-name');
 const VALID_DEPLOY_TYPES = ['npm', 'http-server', 'nginx'];
 
 /**
@@ -6,7 +6,9 @@ const VALID_DEPLOY_TYPES = ['npm', 'http-server', 'nginx'];
  * @returns {string|null} error message, or null when valid.
  */
 function validateManifest(manifest) {
-  if (!manifest || typeof manifest.name !== 'string' || !NAME_RE.test(manifest.name)) {
+  // Message kept identical to before so the restore route's 400 matcher
+  // (which looks for 'Invalid app name') still fires.
+  if (!isValidAppName(manifest && manifest.name)) {
     return 'Invalid app name in backup';
   }
   if (!VALID_DEPLOY_TYPES.includes(manifest.deploy_type)) {

@@ -2,6 +2,7 @@ const { queries } = require('../db');
 const pathHelper = require('../utils/path-helper');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
+const { isValidAppName } = require('../utils/validate-app-name');
 const fs = require('fs');
 const path = require('path');
 
@@ -18,6 +19,10 @@ class AppManager {
     // Validate inputs
     if (!name || !deployType) {
       throw new Error('Name and deploy_type are required');
+    }
+
+    if (!isValidAppName(name)) {
+      throw new Error('Invalid app name: use only letters, numbers, dashes, and underscores (max 64)');
     }
 
     if (!['npm', 'http-server', 'nginx'].includes(deployType)) {

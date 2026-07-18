@@ -45,3 +45,16 @@ test('restore non-zip -> 400', async () => {
     .attach('file', Buffer.from('not a zip'), 'x.zip');
   assert.equal(restore.status, 400);
 });
+
+test('restore a backup with an invalid manifest name -> 400', async () => {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip();
+  zip.addFile(
+    'microverse-manifest.json',
+    JSON.stringify({ name: '../bad', deploy_type: 'http-server', env: [] })
+  );
+  const restore = await agent.post('/api/apps/restore')
+    .attach('file', zip.toBuffer(), 'bad.zip');
+  assert.equal(restore.status, 400);
+  assert.match(restore.body.error.message, /Invalid app name/);
+});

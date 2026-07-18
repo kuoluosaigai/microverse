@@ -25,6 +25,18 @@ test('POST /api/apps rejects duplicate name', async () => {
   assert.match(res.body.error.message, /already exists/);
 });
 
+test('POST /api/apps rejects an invalid name', async () => {
+  const res = await agent.post('/api/apps').send({ name: '../pwn', deploy_type: 'http-server' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error.message, /Invalid app name/);
+});
+
+test('POST /api/apps rejects an over-long name', async () => {
+  const res = await agent.post('/api/apps').send({ name: 'a'.repeat(65), deploy_type: 'http-server' });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error.message, /Invalid app name/);
+});
+
 test('GET /api/apps lists apps', async () => {
   const res = await agent.get('/api/apps');
   assert.equal(res.status, 200);
