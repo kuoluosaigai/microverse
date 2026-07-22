@@ -10,6 +10,12 @@ test('running app -> one HTTP server block on <name>.<base>', () => {
   assert.match(conf, /listen 80;/);
   assert.match(conf, /proxy_pass http:\/\/127\.0\.0\.1:3001;/);
   assert.match(conf, /proxy_set_header X-Forwarded-Proto \$scheme;/);
+  // WebSocket upgrade — without these the edge proxy drops the handshake
+  // (browser sees "Unexpected response code: 200" instead of 101).
+  assert.match(conf, /proxy_http_version 1\.1;/);
+  assert.match(conf, /proxy_set_header Upgrade\s+\$http_upgrade;/);
+  assert.match(conf, /proxy_set_header Connection\s+"upgrade";/);
+  assert.match(conf, /proxy_read_timeout 3600s;/);
   assert.doesNotMatch(conf, /listen 443/);
 });
 
