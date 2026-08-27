@@ -64,3 +64,14 @@ CREATE TABLE IF NOT EXISTS proxy_routes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_proxy_routes_host ON proxy_routes(host);
+
+-- Domain pool: pre-registered custom domains the admin can pick from when
+-- creating a proxy_routes mapping. Purely a candidate list — only proxy_routes
+-- (not this table) affects the rendered nginx config.
+CREATE TABLE IF NOT EXISTS proxy_domains (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host TEXT NOT NULL UNIQUE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_domains_host ON proxy_domains(host);

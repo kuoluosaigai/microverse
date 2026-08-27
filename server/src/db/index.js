@@ -193,6 +193,16 @@ const queries = {
 
   deleteProxyRoute: (id) => dbRun('DELETE FROM proxy_routes WHERE id = ?', [id]),
 
+  // Proxy domain queries (pre-registered domain pool for custom-domain mapping)
+  listProxyDomains: () => dbAll('SELECT * FROM proxy_domains ORDER BY id'),
+
+  createProxyDomain: (params) => dbRun(
+    'INSERT INTO proxy_domains (host) VALUES (?)',
+    [params.host]
+  ),
+
+  deleteProxyDomain: (id) => dbRun('DELETE FROM proxy_domains WHERE id = ?', [id]),
+
   // User queries (admin auth)
   getUserCount: () => dbGet('SELECT COUNT(*) AS count FROM users'),
 
