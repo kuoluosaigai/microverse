@@ -185,6 +185,23 @@
     "saveError": "Failed to save mapping",
     "deleteError": "Failed to delete mapping"
   },
+  "proxyDomains": {
+    "title": "Domain Pool",
+    "lead": "Pre-registered domains available for mapping",
+    "add": "Add domain",
+    "host": "Domain",
+    "hostPlaceholder": "app.example.com",
+    "hostRequired": "Enter a domain",
+    "hostInvalid": "Letters, digits, dots and hyphens only",
+    "empty": "No domains in the pool yet",
+    "emptyDesc": "Pre-register domains here, then pick them from the dropdown when creating a mapping.",
+    "deleteTitle": "Remove domain",
+    "created": "Domain added",
+    "deleted": "Domain removed",
+    "loadError": "Failed to load domains",
+    "saveError": "Failed to add domain",
+    "deleteError": "Failed to remove domain"
+  },
   "messages": {
     "appCreated": "Application created successfully",
     "appDeleted": "Application deleted successfully",

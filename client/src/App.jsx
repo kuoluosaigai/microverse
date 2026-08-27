@@ -9,6 +9,7 @@ import UploadFiles from './pages/UploadFiles'
 import AppLogs from './pages/AppLogs'
 import AppMetrics from './pages/AppMetrics'
 import ProxyRoutes from './pages/ProxyRoutes'
+import ProxyDomains from './pages/ProxyDomains'
 import Login from './pages/Login'
 import ErrorBoundary from './components/ErrorBoundary'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -67,6 +68,7 @@ function App() {
                 <Route path="/apps/:id/logs" element={<ErrorBoundary compact><AppLogs /></ErrorBoundary>} />
                 <Route path="/apps/:id/metrics" element={<ErrorBoundary compact><AppMetrics /></ErrorBoundary>} />
                 <Route path="/routes" element={<ErrorBoundary compact><ProxyRoutes /></ErrorBoundary>} />
+                <Route path="/domains" element={<ErrorBoundary compact><ProxyDomains /></ErrorBoundary>} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -215,4 +215,22 @@ export const deleteProxyRoute = async (id) => {
   return response.data.data
 }
 
+/**
+ * Domain pool (pre-registered custom domains for mapping).
+ */
+export const getProxyDomains = async () => {
+  const response = await api.get('/proxy-domains')
+  return response.data.data
+}
+
+export const createProxyDomain = async (host) => {
+  const response = await api.post('/proxy-domains', { host })
+  return response.data.data
+}
+
+export const deleteProxyDomain = async (id) => {
+  const response = await api.delete(`/proxy-domains/${id}`)
+  return response.data.data
+}
+
 export default api

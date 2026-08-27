@@ -133,6 +133,11 @@ function Dashboard() {
           {t('proxyRoutes.title')}
         </button>
       )}
+      {appConfig?.proxyEnabled && (
+        <button className="nav-link" onClick={() => navigate('/domains')}>
+          {t('proxyDomains.title')}
+        </button>
+      )}
       <LanguageSwitcher />
       <input
         ref={fileInputRef}

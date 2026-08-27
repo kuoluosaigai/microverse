@@ -185,6 +185,23 @@
     "saveError": "保存映射失败",
     "deleteError": "删除映射失败"
   },
+  "proxyDomains": {
+    "title": "域名池",
+    "lead": "提前录入、可供映射选择的域名",
+    "add": "添加域名",
+    "host": "域名",
+    "hostPlaceholder": "app.example.com",
+    "hostRequired": "请输入域名",
+    "hostInvalid": "仅允许字母、数字、点和连字符",
+    "empty": "域名池还是空的",
+    "emptyDesc": "在这里提前录入域名，创建映射时即可从下拉列表中选择。",
+    "deleteTitle": "移除域名",
+    "created": "域名已添加",
+    "deleted": "域名已移除",
+    "loadError": "加载域名失败",
+    "saveError": "添加域名失败",
+    "deleteError": "移除域名失败"
+  },
   "messages": {
     "appCreated": "应用创建成功",
     "appDeleted": "应用删除成功",
