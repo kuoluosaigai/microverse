@@ -657,6 +657,83 @@ router.delete('/apps/:id/default', async (req, res, next) => {
   }
 });
 
+// List custom domain mappings (reverse-proxy routes)
+router.get('/proxy-routes', async (req, res, next) => {
+  try {
+    const routes = await queries.listProxyRoutes();
+    const apps = await queries.getAllApps();
+    const byId = new Map(apps.map(a => [a.id, a]));
+    const data = routes.map(r => {
+      const app = r.target_app_id != null ? byId.get(r.target_app_id) : null;
+      return {
+        ...r,
+        target_app_name: app ? app.name : null,
+        resolved: r.target_type === 'port' ? true : !!(app && app.status === 'running' && app.port)
+      };
+    });
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+// Create a custom domain mapping
+router.post('/proxy-routes', async (req, res, next) => {
+  try {
+    const apps = await queries.getAllApps();
+    const route = ProxyManager.validateProxyRoute(req.body, { apps });
+    const existing = await queries.listProxyRoutes();
+    if (existing.some(r => r.host === route.host)) {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
+    }
+    const result = await queries.createProxyRoute(route);
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate failed: ${e.message}`); }
+    const created = await queries.getProxyRouteById(result.lastID);
+    res.status(201).json({ success: true, data: created });
+  } catch (error) {
+    if (error.message.startsWith('Invalid proxy route')) {
+      return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+// Update a custom domain mapping
+router.put('/proxy-routes/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const apps = await queries.getAllApps();
+    const route = ProxyManager.validateProxyRoute(req.body, { apps });
+    const existing = await queries.listProxyRoutes();
+    if (existing.some(r => r.host === route.host && r.id !== id)) {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
+    }
+    const result = await queries.updateProxyRoute(id, route);
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, error: { message: 'Route not found' } });
+    }
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate failed: ${e.message}`); }
+    const row = await queries.getProxyRouteById(id);
+    res.json({ success: true, data: row });
+  } catch (error) {
+    if (error.message.startsWith('Invalid proxy route')) {
+      return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    next(error);
+  }
+});
+
+// Delete a custom domain mapping
+router.delete('/proxy-routes/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const result = await queries.deleteProxyRoute(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, error: { message: 'Route not found' } });
+    }
+    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate failed: ${e.message}`); }
+    res.json({ success: true, data: { message: 'Route deleted' } });
+  } catch (error) { next(error); }
+});
+
 // Get the current session user (protected)
 router.get('/auth/me', (req, res) => {
   res.json({ success: true, data: { user: req.session.user } });
