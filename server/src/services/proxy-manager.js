@@ -163,6 +163,20 @@ function validateProxyRoute(input = {}, ctx = {}) {
   return { host, target_type: 'app', target_port: null, target_app_id: appId };
 }
 
+/**
+ * Validate + normalize a proxy-domain (domain-pool) input. Returns { host } or
+ * throws a descriptive Error (prefix "Invalid proxy domain: " so routes can map
+ * it to a 400).
+ * @param {{host?:string}} input
+ */
+function validateProxyDomain(input = {}) {
+  const host = String(input.host || '').trim().toLowerCase();
+  if (!/^[\w.-]+$/.test(host)) {
+    throw new Error('Invalid proxy domain: host must be a valid domain (letters, digits, dots, hyphens)');
+  }
+  return { host };
+}
+
 function binError(bin, err, lead) {
   if (err.code === 'ENOENT' || /command not found|not recognized|127/.test(err.message || '')) {
     return `nginx binary not found ('${bin}')`;
@@ -258,4 +272,4 @@ async function regenerate(scope = {}) {
   return { ok: true };
 }
 
-module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute, regenerate };
+module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute, validateProxyDomain, regenerate };

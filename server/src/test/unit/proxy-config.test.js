@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute } = require('../../services/proxy-manager');
+const { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute, validateProxyDomain } = require('../../services/proxy-manager');
 
 const app = (over) => ({ name: 'sticky', port: 3001, status: 'running', is_default: 0, ...over });
 
@@ -155,4 +155,14 @@ test('validateProxyRoute rejects bad input', () => {
   assert.throws(() => validateProxyRoute({ host: 'x.com', target_type: 'port', target_port: 99999 }, {}), /Invalid proxy route/);
   assert.throws(() => validateProxyRoute({ host: 'x.com', target_type: 'app', target_app_id: 999 }, { apps: [] }), /Invalid proxy route/);
   assert.throws(() => validateProxyRoute({ host: 'x.com', target_type: 'app' }, { apps: [{ id: 1 }] }), /Invalid proxy route/);
+});
+
+test('validateProxyDomain normalizes and lowercases a valid host', () => {
+  assert.deepEqual(validateProxyDomain({ host: 'A.Example.COM' }), { host: 'a.example.com' });
+});
+
+test('validateProxyDomain rejects invalid host', () => {
+  assert.throws(() => validateProxyDomain({ host: 'bad host' }), /Invalid proxy domain/);
+  assert.throws(() => validateProxyDomain({ host: '' }), /Invalid proxy domain/);
+  assert.throws(() => validateProxyDomain({ host: 'a b;c' }), /Invalid proxy domain/);
 });

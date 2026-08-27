@@ -740,6 +740,47 @@ router.delete('/proxy-routes/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// List pre-registered domains (domain pool for custom-domain mapping)
+router.get('/proxy-domains', async (req, res, next) => {
+  try {
+    const rows = await queries.listProxyDomains();
+    res.json({ success: true, data: rows });
+  } catch (error) { next(error); }
+});
+
+// Add a domain to the pool (does NOT touch nginx — pool is a candidate list only)
+router.post('/proxy-domains', async (req, res, next) => {
+  try {
+    const domain = ProxyManager.validateProxyDomain(req.body);
+    const existing = await queries.listProxyDomains();
+    if (existing.some(d => d.host === domain.host)) {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
+    }
+    const result = await queries.createProxyDomain(domain);
+    res.status(201).json({ success: true, data: { id: result.lastID, host: domain.host } });
+  } catch (error) {
+    if (error.message.startsWith('Invalid proxy domain')) {
+      return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
+    }
+    next(error);
+  }
+});
+
+// Remove a domain from the pool
+router.delete('/proxy-domains/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const result = await queries.deleteProxyDomain(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, error: { message: 'Domain not found' } });
+    }
+    res.json({ success: true, data: { message: 'Domain deleted' } });
+  } catch (error) { next(error); }
+});
+
 // Get the current session user (protected)
 router.get('/auth/me', (req, res) => {
   res.json({ success: true, data: { user: req.session.user } });
