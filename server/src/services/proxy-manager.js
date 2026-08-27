@@ -170,6 +170,7 @@ function validateProxyRoute(input = {}, ctx = {}) {
  * @param {{host?:string}} input
  */
 function validateProxyDomain(input = {}) {
+  input = input || {};
   const host = String(input.host || '').trim().toLowerCase();
   if (!/^[\w.-]+$/.test(host)) {
     throw new Error('Invalid proxy domain: host must be a valid domain (letters, digits, dots, hyphens)');

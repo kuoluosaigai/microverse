@@ -158,7 +158,7 @@ function ProxyRoutes() {
               options={availableDomains}
               placeholder={t('proxyRoutes.hostAutoPlaceholder')}
               allowClear
-              filterOption={(input, option) => (option.value || '').includes(input)}
+              filterOption={(input, option) => (option.value || '').toLowerCase().includes((input || '').toLowerCase())}
             />
           </Form.Item>
           <Form.Item name="target_type" label={t('proxyRoutes.targetType')} initialValue="port" rules={[{ required: true }]}>

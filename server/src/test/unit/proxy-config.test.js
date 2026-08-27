@@ -165,4 +165,5 @@ test('validateProxyDomain rejects invalid host', () => {
   assert.throws(() => validateProxyDomain({ host: 'bad host' }), /Invalid proxy domain/);
   assert.throws(() => validateProxyDomain({ host: '' }), /Invalid proxy domain/);
   assert.throws(() => validateProxyDomain({ host: 'a b;c' }), /Invalid proxy domain/);
+  assert.throws(() => validateProxyDomain(null), /Invalid proxy domain/);
 });
