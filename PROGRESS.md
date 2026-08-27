@@ -3,8 +3,8 @@
 ## 当前状态
 
 **版本**: v1.0.0（package.json；其后已追加大量特性，尚未打新 tag）
-**最后更新**: 2026-07-19
-**状态**: ✅ 全部核心功能（三种部署类型 + 文件上传 + 双语 + editorial UI + 日志 + npm 自动 install/build/env + 资源监控 + 单管理员登录 + 备份/恢复 + 限流 + 平台托管 nginx 反向代理 + 生产单端口部署）均已完成，可用于生产。SSL 证书签发不做（只预留结构）。
+**最后更新**: 2026-08-27
+**状态**: ✅ 全部核心功能（三种部署类型 + 文件上传 + 双语 + editorial UI + 日志 + npm 自动 install/build/env + 资源监控 + 单管理员登录 + 备份/恢复 + 限流 + 平台托管 nginx 反向代理（含自定义域名映射）+ 生产单端口部署）均已完成，可用于生产。SSL 证书签发不做（只预留结构）；自定义域名 v1 仅 HTTP。
 
 ## 已完成功能
 
@@ -95,6 +95,7 @@
 - ✅ **Node.js (npm)** - 完全可用（start 时自动 `npm install`（含 devDependencies）+ 可选 `npm run build`；平台分配端口并注入 `PORT`；可配置环境变量）
 - ✅ **Nginx** - 静态站可用（nginx 作为 PM2 进程 serve app 目录；需本机安装 nginx 并经 `NGINX_BIN` 或 PATH 提供）
 - ✅ **平台托管反向代理**（横切特性，非部署类型；opt-in `PROXY_ENABLED`）：把每个运行中应用的子域名 `<app>.<base-domain>` 路由到其端口，并可设一个根域名默认应用；应用 start/stop/delete 及开机自动重生成 nginx conf + reload。SSL 签发**不做**（只生成 server 块形态，用户自行 certbot 后填 `PROXY_SSL_*` 路径）。
+- ✅ **自定义域名映射**（2026-08-27）：`proxy_routes` 表支持「外部域名 → 内部端口 / 应用」通用映射（`/routes` 页面 + `/api/proxy-routes` CRUD）；自定义块与自动子域名块同写 `PROXY_CONF_FILE`、位于最前（显式配置优先），v1 仅 HTTP、不依赖 `PROXY_BASE_DOMAIN`。
 
 ## 待实现功能
 
@@ -209,6 +210,12 @@
 - 文档: Claude + Human Developer
 
 ## 变更日志
+
+### [Unreleased] — 2026-08-27 (generic custom domain mapping)
+#### 新增
+- 通用自定义域名映射：新增 `proxy_routes` 表（外部 `host` → `target_type='port'` 内部端口 或 `target_type='app'` Microverse 应用）+ `GET/POST /api/proxy-routes` + `PUT/DELETE /api/proxy-routes/:id` CRUD + 前端 `/routes` 页面（Dashboard 导航入口，仅 `PROXY_ENABLED=true` 时显示）。自定义块渲染在 `PROXY_CONF_FILE` 中、位于自动子域名块**之前**（显式配置优先），v1 仅 HTTP（`listen 80`），**不依赖** `PROXY_BASE_DOMAIN`（缺失时仅渲染自定义块）。设计文档：[docs/superpowers/specs/2026-08-27-custom-domain-mapping-design.md](docs/superpowers/specs/2026-08-27-custom-domain-mapping-design.md)。
+#### 文档
+- 反向代理范围决策更新：`2026-07-18-nginx-reverse-proxy-design.md` 第 7、229 行「不支持 per-app 自定义域名（沿用全局 `{name}` 模板）」已被本设计取代。
 
 ### [Unreleased] — 2026-07-18 (docs: env reference + NGINX_BIN gotcha)
 #### 文档

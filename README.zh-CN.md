@@ -143,6 +143,22 @@ npm run pm2:start
 结构已预留——当你提供证书路径（`PROXY_SSL_*`）时即生效；平台自身**不签发**证书，请
 自行获取（例如 `certbot`）并在配置中指向它。
 
+#### 自定义域名（任意域名 → 端口 / 应用）
+
+除了自动生成的 `<app>.<base-domain>` 子域名，你还可以把任意外部域名映射到内部端口
+（本机任意 web 服务）或某个 Microverse 应用。可在 `/routes` 页面（**域名映射**，仅当
+`PROXY_ENABLED=true` 时出现在 Dashboard 导航中）管理，也可通过 API：
+
+- `GET /api/proxy-routes` —— 列出自定义域名映射
+- `POST /api/proxy-routes` —— 新建映射（`{ host, target_type: 'port'|'app', target_port?, target_app_id? }`）
+- `PUT /api/proxy-routes/:id` —— 更新映射
+- `DELETE /api/proxy-routes/:id` —— 删除映射
+
+映射与自动子域名块写入同一个 `PROXY_CONF_FILE`，且渲染在自动块**之前**（显式配置优先）。
+v1 仅 HTTP（`listen 80`），**不依赖** `PROXY_BASE_DOMAIN`——请把自定义域名的 DNS 解析到
+本机，并确保系统 nginx 监听 80 且 include 该 conf 文件。指向应用的映射只有在该应用运行时
+才路由；停用后不再路由（UI 显示「未运行」）。
+
 ### 更新现有部署
 
 `data/*.sqlite`（应用、环境变量、管理员账户）和 `apps/`（已部署的应用文件）都被 gitignore 忽略，且数据库 schema 在启动时会自愈（`CREATE TABLE IF NOT EXISTS`），因此更新绝不会丢失数据，也无需任何迁移步骤。
@@ -255,6 +271,12 @@ microverse/
 - `GET /api/apps/:id/logs/stream` - 实时日志流（SSE；先发送最近历史，再推送新行；`?lines=N`，默认 100）
 - `GET /api/apps/:id/env` - 列出应用的环境变量
 - `PUT /api/apps/:id/env` - 替换应用的环境变量（`{ env: [{ key, value }] }`；下次启动时生效）
+
+### 反向代理（自定义域名映射）
+- `GET /api/proxy-routes` - 列出自定义域名映射
+- `POST /api/proxy-routes` - 新建映射（请求体：`{ host, target_type: 'port'|'app', target_port?, target_app_id? }`）
+- `PUT /api/proxy-routes/:id` - 更新映射
+- `DELETE /api/proxy-routes/:id` - 删除映射
 
 ### 系统
 - `GET /api/health` - 健康检查

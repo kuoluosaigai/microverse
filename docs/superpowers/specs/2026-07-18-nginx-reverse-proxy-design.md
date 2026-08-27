@@ -4,7 +4,7 @@
 - **状态**: Approved (design)
 - **范围**: 让平台自动生成并 reload 系统级 nginx 反向代理配置，把每个运行中应用的子域名路由到其端口，并支持把根域名指向某个"默认应用"；生命周期变更自动重生成；SSL 配置结构预留（不签发证书）。同批顺带：会话加固（修复无故被登出）、登录页密码框双下划线 CSS 修复。
 - **取代**: `docs/superpowers/specs/2026-07-18-domain-deploy-hardening-design.md` 第 6、215 行"不做 nginx 反代/SSL/域名绑定（用户基建）"的范围决策。本设计将其修订为：**平台托管 app 路由用的 nginx 反代配置**（用户的系统 nginx 仍是底座，平台只写被 include 的子配置并 reload）。
-- **不在范围（v1）**: 自动 Let's Encrypt / certbot 证书签发（仅留配置位 + 配置形态）；per-app 自定义域名（沿用全局 `{name}` 模板）；平台 UI 自身 server 块的托管（用户一次性自行配置，极少变化）；多用户。
+- **不在范围（v1）**: 自动 Let's Encrypt / certbot 证书签发（仅留配置位 + 配置形态）；per-app 自定义域名（沿用全局 `{name}` 模板）；平台 UI 自身 server 块的托管（用户一次性自行配置，极少变化）；多用户。**（注：本行「per-app 自定义域名」的范围决策已被 `docs/superpowers/specs/2026-08-27-custom-domain-mapping-design.md` 取代——现支持显式自定义域名 → 端口/应用映射。）**
 
 ## 背景
 
@@ -226,7 +226,7 @@ app.use(session({
 1. v1 不自动签发 SSL 证书（仅渲染结构）；用户需自行获取证书并填 `PROXY_SSL_CERT/_KEY`。
 2. 不托管平台 UI 自身的 server 块；根域名若被默认应用占用，UI 需另置子域名/端口。
 3. 单实例、单管理员部署模型；`trust proxy` 仅信任一层。
-4. 不支持 per-app 自定义域名（沿用全局 `{name}` 模板）。
+4. 不支持 per-app 自定义域名（沿用全局 `{name}` 模板）。**（注：已被 `docs/superpowers/specs/2026-08-27-custom-domain-mapping-design.md` 取代——现支持显式自定义域名 → 端口/应用映射。）**
 5. 反代依赖系统 nginx 已安装、可写 conf 目录、有 reload 权限（通常需 root 或 nginx 组 + pid 写权限）；不满足时功能降级为 no-op。
 
 ## 改动面 checklist（实现时用）

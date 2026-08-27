@@ -147,6 +147,25 @@ row) to serve `http://yourdomain.com/` from it. SSL is wired for when you
 supply cert paths (`PROXY_SSL_*`); the platform does not issue certificates
 itself — obtain them (e.g. `certbot`) and point the config at them.
 
+#### Custom domains (arbitrary domain → port / app)
+
+Besides the auto-generated `<app>.<base-domain>` subdomains, you can map any
+external domain to an internal port (any web service on the host) or to a
+Microverse app. Add mappings on the **Domain mapping** page at `/routes`
+(shown in the dashboard nav when `PROXY_ENABLED=true`), or via the API:
+
+- `GET /api/proxy-routes` - List custom domain mappings
+- `POST /api/proxy-routes` - Create a mapping (`{ host, target_type: 'port'|'app', target_port?, target_app_id? }`)
+- `PUT /api/proxy-routes/:id` - Update a mapping
+- `DELETE /api/proxy-routes/:id` - Delete a mapping
+
+Mappings render into the same `PROXY_CONF_FILE` as the auto subdomain blocks,
+placed **before** them (explicit config wins). They are HTTP-only (`listen 80`)
+and do **not** require `PROXY_BASE_DOMAIN` — point each custom domain's DNS at
+this host and ensure system nginx listens on 80 and includes the conf file. A
+mapping to an app only routes while that app is running; stopped apps fall
+through (shown as "not running" in the UI).
+
 ### Updating an existing deployment
 
 `data/*.sqlite` (apps, env, admin account) and `apps/` (deployed app files) are
@@ -261,6 +280,12 @@ All endpoints return `{ success, data }` or `{ success: false, error: { message 
 - `GET /api/apps/:id/logs/stream` - Live log stream (SSE; emits recent history then new lines; `?lines=N`, default 100)
 - `GET /api/apps/:id/env` - List an app's environment variables
 - `PUT /api/apps/:id/env` - Replace an app's environment variables (`{ env: [{ key, value }] }`; applies on next start)
+
+### Reverse proxy (custom domain mappings)
+- `GET /api/proxy-routes` - List custom domain mappings
+- `POST /api/proxy-routes` - Create a mapping (body: `{ host, target_type: 'port'|'app', target_port?, target_app_id? }`)
+- `PUT /api/proxy-routes/:id` - Update a mapping
+- `DELETE /api/proxy-routes/:id` - Delete a mapping
 
 ### System
 - `GET /api/health` - Health check
