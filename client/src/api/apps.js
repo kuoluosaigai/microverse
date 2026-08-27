@@ -192,4 +192,27 @@ export const clearAppDefault = async (id) => {
   return response.data.data
 }
 
+/**
+ * Custom domain mappings (reverse-proxy routes).
+ */
+export const getProxyRoutes = async () => {
+  const response = await api.get('/proxy-routes')
+  return response.data.data
+}
+
+export const createProxyRoute = async (payload) => {
+  const response = await api.post('/proxy-routes', payload)
+  return response.data.data
+}
+
+export const updateProxyRoute = async (id, payload) => {
+  const response = await api.put(`/proxy-routes/${id}`, payload)
+  return response.data.data
+}
+
+export const deleteProxyRoute = async (id) => {
+  const response = await api.delete(`/proxy-routes/${id}`)
+  return response.data.data
+}
+
 export default api

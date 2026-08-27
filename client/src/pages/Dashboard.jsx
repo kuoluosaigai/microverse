@@ -5,11 +5,13 @@ import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
 import AppRow from '../components/AppRow'
 import LanguageSwitcher from '../components/LanguageSwitcher'
+import { useAppConfig } from '../context/AppConfigContext'
 import { getAllApps, deleteApp, startApp, stopApp, restoreApp, setAppDefault, clearAppDefault } from '../api/apps'
 
 function Dashboard() {
   const navigate = useNavigate()
   const { t } = useTranslation()
+  const appConfig = useAppConfig()
   const [apps, setApps] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -126,6 +128,11 @@ function Dashboard() {
       <button className="nav-link" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
         ↥ {t('dashboard.restore')}
       </button>
+      {appConfig?.proxyEnabled && (
+        <button className="nav-link" onClick={() => navigate('/routes')}>
+          {t('proxyRoutes.title')}
+        </button>
+      )}
       <LanguageSwitcher />
       <input
         ref={fileInputRef}
