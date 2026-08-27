@@ -33,11 +33,17 @@ async function init() {
   return app();
 }
 
-// A supertest agent that is already logged in as the seeded admin.
+// A supertest agent that is already logged in as the seeded admin. Each call
+// uses a unique X-Forwarded-For IP so the login rate-limiter (5/15min/IP, keyed
+// on req.ip; app sets `trust proxy` 1) doesn't trip when a single test file
+// creates more than 5 agents in one process.
+let _adminSeq = 0;
 async function adminAgent() {
   await init();
   const agent = supertest.agent(app());
+  _adminSeq += 1;
   await agent.post('/api/auth/login')
+    .set('X-Forwarded-For', `10.99.${(_adminSeq >> 8) & 255}.${_adminSeq & 255}`)
     .send({ username: 'admin', password: 'test-pass' })
     .expect(200);
   return agent;

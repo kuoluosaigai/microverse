@@ -692,6 +692,9 @@ router.post('/proxy-routes', async (req, res, next) => {
     if (error.message.startsWith('Invalid proxy route')) {
       return res.status(400).json({ success: false, error: { message: error.message } });
     }
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
+    }
     next(error);
   }
 });
@@ -716,6 +719,9 @@ router.put('/proxy-routes/:id', async (req, res, next) => {
   } catch (error) {
     if (error.message.startsWith('Invalid proxy route')) {
       return res.status(400).json({ success: false, error: { message: error.message } });
+    }
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      return res.status(400).json({ success: false, error: { message: 'Domain already exists' } });
     }
     next(error);
   }

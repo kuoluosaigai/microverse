@@ -40,6 +40,23 @@ test('POST rejects duplicate host and invalid target', async () => {
   assert.equal(bad.status, 400);
 });
 
+test('POST maps SQLITE_CONSTRAINT to 400 (race backstop)', async () => {
+  const agent = await adminAgent();
+  const orig = queries.createProxyRoute;
+  queries.createProxyRoute = async () => {
+    const e = new Error('UNIQUE constraint failed: proxy_routes.host');
+    e.code = 'SQLITE_CONSTRAINT';
+    throw e;
+  };
+  try {
+    const r = await agent.post('/api/proxy-routes').send({ host: 'race.example.com', target_type: 'port', target_port: 8080 });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error.message, 'Domain already exists');
+  } finally {
+    queries.createProxyRoute = orig;
+  }
+});
+
 test('GET lists routes with target_app_name + resolved', async () => {
   const agent = await adminAgent();
   const id = await seedApp('resolve-me');

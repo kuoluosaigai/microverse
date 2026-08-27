@@ -99,7 +99,9 @@ function renderProxyConfig(apps, routes = [], opts = {}) {
 
   // 1. Custom routes first (explicit admin config wins over auto-generated
   //    subdomains on a name collision). Always HTTP-only in v1.
-  const routesSorted = (routes || []).slice().sort((x, y) => x.host.localeCompare(y.host));
+  const routesSorted = (routes || [])
+    .filter(r => typeof r.host === 'string' && /^[\w.-]+$/.test(r.host))
+    .sort((x, y) => x.host.localeCompare(y.host));
   for (const r of routesSorted) {
     let port = null;
     if (r.target_type === 'port') {

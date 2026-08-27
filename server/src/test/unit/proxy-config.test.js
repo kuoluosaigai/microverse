@@ -133,6 +133,11 @@ test('custom route stays HTTP-only even when ssl enabled', () => {
   assert.doesNotMatch(conf, /listen 443/);
 });
 
+test('custom route with invalid or null host is skipped (defense-in-depth)', () => {
+  const conf = renderProxyConfig([], [route({ host: 'bad;host' }), route({ host: null })], { baseDomain: 'x.com', ssl: {} });
+  assert.doesNotMatch(conf, /server \{/);
+});
+
 test('validateProxyRoute normalizes a port route', () => {
   const out = validateProxyRoute({ host: 'A.Example.COM', target_type: 'port', target_port: '8080' }, { apps: [] });
   assert.deepEqual(out, { host: 'a.example.com', target_type: 'port', target_port: 8080, target_app_id: null });
