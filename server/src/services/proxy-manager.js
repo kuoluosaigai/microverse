@@ -77,14 +77,15 @@ function renderServerBlock(host, port, ssl) {
 }
 
 /**
- * Pure: render the full managed nginx conf for the given apps.
+ * Pure: render the full managed nginx conf for the given apps + custom routes.
  * @param {Array<{name:string,port:number,status:string,is_default:number}>} apps
+ * @param {Array<{host:string,target_type:string,target_port:number,target_app_id:number}>} routes
  * @param {{baseDomain:string, ssl:{enabled?:boolean,cert?:string,key?:string}}} opts
  * @returns {string}
  */
-function renderProxyConfig(apps, opts) {
-  const { baseDomain, ssl } = opts;
-  validateBaseDomain(baseDomain);
+function renderProxyConfig(apps, routes = [], opts = {}) {
+  const { baseDomain = '', ssl } = opts;
+  if (baseDomain) validateBaseDomain(baseDomain);
 
   // Coerce port to a safe integer and skip apps whose port isn't a finite
   // positive integer — guards against a theoretical string-injection vector
@@ -94,15 +95,70 @@ function renderProxyConfig(apps, opts) {
     .filter(({ a, port }) => a.status === 'running' && Number.isFinite(port) && port > 0)
     .sort(({ a: x }, { a: y }) => x.name.localeCompare(y.name));
 
-  const blocks = running.map(({ a, port }) => renderServerBlock(`${a.name}.${baseDomain}`, port, ssl));
+  const blocks = [];
 
-  const def = running.find(({ a }) => a.is_default);
-  if (def) {
-    blocks.push(renderServerBlock(`${baseDomain} www.${baseDomain}`, def.port, ssl));
+  // 1. Custom routes first (explicit admin config wins over auto-generated
+  //    subdomains on a name collision). Always HTTP-only in v1.
+  const routesSorted = (routes || []).slice().sort((x, y) => x.host.localeCompare(y.host));
+  for (const r of routesSorted) {
+    let port = null;
+    if (r.target_type === 'port') {
+      const p = Math.floor(Number(r.target_port));
+      if (Number.isFinite(p) && p >= 1 && p <= 65535) port = p;
+    } else if (r.target_type === 'app') {
+      const target = running.find(({ a }) => a.id === r.target_app_id);
+      if (target) port = target.port;
+    }
+    if (port) blocks.push(renderServerBlock(r.host, port, null));
+  }
+
+  // 2. Auto subdomain + 3. root-domain default app blocks (only when a base
+  //    domain is configured).
+  if (baseDomain) {
+    for (const { a, port } of running) {
+      blocks.push(renderServerBlock(`${a.name}.${baseDomain}`, port, ssl));
+    }
+    const def = running.find(({ a }) => a.is_default);
+    if (def) {
+      blocks.push(renderServerBlock(`${baseDomain} www.${baseDomain}`, def.port, ssl));
+    }
   }
 
   if (blocks.length === 0) return HEADER + '\n';
   return HEADER + '\n' + blocks.join('\n\n') + '\n';
+}
+
+/**
+ * Validate + normalize a proxy-route input. Returns { host, target_type,
+ * target_port, target_app_id } or throws a descriptive Error (prefix
+ * "Invalid proxy route: " so routes can map it to a 400).
+ * @param {{host?:string, target_type?:string, target_port?:any, target_app_id?:any}} input
+ * @param {{apps?:Array<{id:number}>}} ctx apps list for target_type='app' existence check
+ */
+function validateProxyRoute(input = {}, ctx = {}) {
+  const host = String(input.host || '').trim().toLowerCase();
+  if (!/^[\w.-]+$/.test(host)) {
+    throw new Error('Invalid proxy route: host must be a valid domain (letters, digits, dots, hyphens)');
+  }
+  const targetType = input.target_type;
+  if (targetType !== 'port' && targetType !== 'app') {
+    throw new Error("Invalid proxy route: target_type must be 'port' or 'app'");
+  }
+  if (targetType === 'port') {
+    const port = Math.floor(Number(input.target_port));
+    if (!Number.isFinite(port) || port < 1 || port > 65535 || input.target_app_id != null) {
+      throw new Error('Invalid proxy route: port target requires target_port (1-65535) and no target_app_id');
+    }
+    return { host, target_type: 'port', target_port: port, target_app_id: null };
+  }
+  const appId = Math.floor(Number(input.target_app_id));
+  if (!Number.isFinite(appId) || appId < 1 || input.target_port != null) {
+    throw new Error('Invalid proxy route: app target requires target_app_id and no target_port');
+  }
+  if (!(ctx.apps || []).some(a => a.id === appId)) {
+    throw new Error('Invalid proxy route: target app not found');
+  }
+  return { host, target_type: 'app', target_port: null, target_app_id: appId };
 }
 
 function binError(bin, err, lead) {
@@ -131,10 +187,6 @@ async function regenerate(scope = {}) {
     proxyBaseDomain: config.deployment.proxyBaseDomain,
     appPublicUrlTemplate: config.deployment.appPublicUrlTemplate
   });
-  if (!baseDomain) {
-    console.warn('⚠ [proxy] PROXY_ENABLED but no base domain (set PROXY_BASE_DOMAIN or APP_PUBLIC_URL_TEMPLATE). Skipping.');
-    return { ok: false, skipped: true, reason: 'no-base-domain' };
-  }
 
   const ssl = {
     enabled: config.deployment.proxySslEnabled,
@@ -144,8 +196,12 @@ async function regenerate(scope = {}) {
 
   let conf;
   try {
-    const apps = await queries.getAllApps();
-    conf = renderProxyConfig(apps, { baseDomain, ssl });
+    const [apps, routes] = await Promise.all([queries.getAllApps(), queries.listProxyRoutes()]);
+    if (!baseDomain && routes.length === 0) {
+      console.warn('⚠ [proxy] PROXY_ENABLED but no base domain and no custom routes. Skipping.');
+      return { ok: false, skipped: true, reason: 'no-base-domain' };
+    }
+    conf = renderProxyConfig(apps, routes, { baseDomain, ssl });
   } catch (err) {
     console.warn(`⚠ [proxy] render failed: ${err.message}`);
     return { ok: false, reason: 'render-failed', message: err.message };
@@ -200,4 +256,4 @@ async function regenerate(scope = {}) {
   return { ok: true };
 }
 
-module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain, regenerate };
+module.exports = { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute, regenerate };

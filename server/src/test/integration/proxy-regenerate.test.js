@@ -34,6 +34,7 @@ test('regenerate is a no-op when proxy disabled', async () => {
 
 test('regenerate skips with a warning when base domain is missing', async () => {
   const s = snapshot();
+  await init();
   config.deployment.proxyEnabled = true;
   config.deployment.proxyBaseDomain = '';
   // Also ensure no template-derived domain leaks in from the env:
