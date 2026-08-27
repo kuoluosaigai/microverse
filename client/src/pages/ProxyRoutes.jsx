@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Modal, Form, Input, Radio, Select, InputNumber, Popconfirm, message } from 'antd'
+import { Modal, Form, AutoComplete, Radio, Select, InputNumber, Popconfirm, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import { useAppConfig } from '../context/AppConfigContext'
-import { getAllApps, getProxyRoutes, createProxyRoute, updateProxyRoute, deleteProxyRoute } from '../api/apps'
+import { getAllApps, getProxyRoutes, createProxyRoute, updateProxyRoute, deleteProxyRoute, getProxyDomains } from '../api/apps'
 
 function ProxyRoutes() {
   const navigate = useNavigate()
@@ -13,15 +13,17 @@ function ProxyRoutes() {
   const appConfig = useAppConfig()
   const [routes, setRoutes] = useState([])
   const [apps, setApps] = useState([])
+  const [domains, setDomains] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null) // null = closed; {} = create; {..row} = edit
   const [form] = Form.useForm()
 
   const load = async () => {
     try {
-      const [r, a] = await Promise.all([getProxyRoutes(), getAllApps()])
+      const [r, a, d] = await Promise.all([getProxyRoutes(), getAllApps(), getProxyDomains()])
       setRoutes(r)
       setApps(a)
+      setDomains(d)
     } catch {
       message.error(t('proxyRoutes.loadError'))
     } finally {
@@ -63,6 +65,12 @@ function ProxyRoutes() {
       message.error(error.response?.data?.error?.message || t('proxyRoutes.saveError'))
     }
   }
+
+  // Pool domains not already claimed by a mapping (the row being edited keeps its
+  // own host so it stays selectable while editing). Available = pool − mapped.
+  const availableDomains = domains
+    .filter(d => !routes.some(r => r.host === d.host && r.id !== (editing && editing.id)))
+    .map(d => ({ value: d.host }))
 
   const remove = async (id) => {
     try {
@@ -146,7 +154,12 @@ function ProxyRoutes() {
             { required: true, message: t('proxyRoutes.hostRequired') },
             { pattern: /^[\w.-]+$/, message: t('proxyRoutes.hostInvalid') }
           ]}>
-            <Input placeholder={t('proxyRoutes.hostPlaceholder')} />
+            <AutoComplete
+              options={availableDomains}
+              placeholder={t('proxyRoutes.hostAutoPlaceholder')}
+              allowClear
+              filterOption={(input, option) => (option.value || '').includes(input)}
+            />
           </Form.Item>
           <Form.Item name="target_type" label={t('proxyRoutes.targetType')} initialValue="port" rules={[{ required: true }]}>
             <Radio.Group>

@@ -162,6 +162,7 @@
     "disabledTitle": "反向代理未启用（请设 PROXY_ENABLED=true）",
     "host": "域名",
     "hostPlaceholder": "app.example.com",
+    "hostAutoPlaceholder": "从域名池选择或手动输入（app.example.com）",
     "hostRequired": "请输入域名",
     "hostInvalid": "仅允许字母、数字、点和连字符",
     "targetType": "目标类型",

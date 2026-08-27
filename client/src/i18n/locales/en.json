@@ -162,6 +162,7 @@
     "disabledTitle": "Reverse proxy is disabled (set PROXY_ENABLED=true)",
     "host": "Domain",
     "hostPlaceholder": "app.example.com",
+    "hostAutoPlaceholder": "Pick a domain or type one (app.example.com)",
     "hostRequired": "Enter a domain",
     "hostInvalid": "Letters, digits, dots and hyphens only",
     "targetType": "Target type",
