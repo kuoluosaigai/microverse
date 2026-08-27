@@ -176,6 +176,23 @@ const queries = {
     return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
   },
 
+  // Proxy route queries (custom domain -> port/app mappings)
+  listProxyRoutes: () => dbAll('SELECT * FROM proxy_routes ORDER BY id'),
+
+  getProxyRouteById: (id) => dbGet('SELECT * FROM proxy_routes WHERE id = ?', [id]),
+
+  createProxyRoute: (params) => dbRun(
+    'INSERT INTO proxy_routes (host, target_type, target_port, target_app_id) VALUES (?, ?, ?, ?)',
+    [params.host, params.target_type, params.target_port ?? null, params.target_app_id ?? null]
+  ),
+
+  updateProxyRoute: (id, params) => dbRun(
+    'UPDATE proxy_routes SET host = ?, target_type = ?, target_port = ?, target_app_id = ? WHERE id = ?',
+    [params.host, params.target_type, params.target_port ?? null, params.target_app_id ?? null, id]
+  ),
+
+  deleteProxyRoute: (id) => dbRun('DELETE FROM proxy_routes WHERE id = ?', [id]),
+
   // User queries (admin auth)
   getUserCount: () => dbGet('SELECT COUNT(*) AS count FROM users'),
 

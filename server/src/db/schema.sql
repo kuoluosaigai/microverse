@@ -46,3 +46,21 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Custom domain -> port/app reverse-proxy mappings (edge proxy, opt-in via PROXY_ENABLED)
+CREATE TABLE IF NOT EXISTS proxy_routes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  host TEXT NOT NULL UNIQUE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('port','app')),
+  target_port INTEGER,
+  target_app_id INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (target_app_id) REFERENCES apps(id) ON DELETE CASCADE,
+  CHECK (
+    (target_type='port' AND target_port IS NOT NULL AND target_app_id IS NULL) OR
+    (target_type='app'  AND target_app_id IS NOT NULL AND target_port IS NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_routes_host ON proxy_routes(host);
