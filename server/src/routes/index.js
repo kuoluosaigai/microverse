@@ -17,6 +17,7 @@ const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenTopDirs } = require('../utils/flatten-zip-root');
 const zipDecoder = require('../utils/zip-decoder');
+const { staleFilesToRemove } = require('../utils/stale-files');
 const { queries } = require('../db');
 const ProxyManager = require('../services/proxy-manager');
 
@@ -487,6 +488,11 @@ router.post('/apps/:id/upload', async (req, res, next) => {
       fs.mkdirSync(app.path, { recursive: true });
     }
 
+    // Snapshot the app dir before multer writes this upload's files, so we can
+    // tell which entries predate the request (stale user content to remove when
+    // a zip upload replaces the app).
+    const beforeFiles = fs.readdirSync(app.path);
+
     // Use multer middleware
     upload.array('files')(req, res, async (err) => {
       if (err) {
@@ -507,6 +513,17 @@ router.post('/apps/:id/upload', async (req, res, next) => {
           success: false,
           error: { message: 'No files uploaded' }
         });
+      }
+
+      // A zip upload is a full-content replacement: remove stale user files left
+      // over from a previous deploy, but keep platform-managed entries
+      // (node_modules, nginx conf/pid/logs) and the files just written here.
+      const hasZip = req.files.some(f => path.extname(f.filename).toLowerCase() === '.zip');
+      if (hasZip) {
+        const stale = staleFilesToRemove(app, beforeFiles, req.files.map(f => f.filename));
+        for (const name of stale) {
+          fs.rmSync(path.join(app.path, name), { recursive: true, force: true });
+        }
       }
 
       const uploadedFiles = [];

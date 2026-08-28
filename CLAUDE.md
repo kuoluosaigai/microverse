@@ -195,7 +195,7 @@ Key endpoints:
 - `GET /api/apps/:id/logs/stream` - SSE stream of an app's logs (history then live; `?lines=N`)
 - `GET /api/apps/:id/metrics` - Per-app resource metrics history (CPU/memory samples)
 - `GET|PUT /api/apps/:id/env` - Get/set user env vars (baked at launch; restart to apply)
-- `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard; single top-level folder auto-flattened)
+- `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard; single top-level folder auto-flattened; a zip upload replaces prior user content — stale files removed, platform files like `node_modules`/nginx conf preserved)
 - `GET /api/apps/:id/backup` - Download per-app backup zip (files + manifest)
 - `POST /api/apps/restore` - Restore app from backup zip (validates first, rolls back on failure, 400 on name clash)
 - `POST /api/apps/:id/default-app` - Mark/unmark a running app as the root-domain default (regenerates edge proxy)
