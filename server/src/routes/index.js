@@ -531,6 +531,13 @@ router.post('/apps/:id/upload', async (req, res, next) => {
 
             zip.extractAllTo(app.path, true);
 
+            // Delete the uploaded .zip BEFORE flattening. multer writes the
+            // archive directly into app.path, so leaving it here makes
+            // readdirSync(app.path) see two entries (the archive + the extracted
+            // wrapper folder) and flattenTopDirs bails out — leaving index.html
+            // buried under repo-main/ and deploy validation failing.
+            fs.unlinkSync(filePath);
+
             // If the zip wrapped everything in one or more nested top-level
             // folders (common with GitHub/IDE zips), hoist their contents up so
             // index.html etc. land directly under the app directory. Returns the
@@ -549,9 +556,6 @@ router.post('/apps/:id/upload', async (req, res, next) => {
                 .filter(name => name.length > 0);
             }
             uploadedFiles.push(...extractedFiles);
-
-            // Delete the ZIP file after extraction
-            fs.unlinkSync(filePath);
 
             // Remove ZIP from uploaded files list
             const zipIndex = uploadedFiles.indexOf(file.filename);
