@@ -16,6 +16,7 @@ const { loginLimiter, apiLimiter } = require('../middleware/rate-limit');
 const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenTopDirs } = require('../utils/flatten-zip-root');
+const zipDecoder = require('../utils/zip-decoder');
 const { queries } = require('../db');
 const ProxyManager = require('../services/proxy-manager');
 
@@ -518,7 +519,7 @@ router.post('/apps/:id/upload', async (req, res, next) => {
         // If ZIP file, extract it
         if (path.extname(file.filename).toLowerCase() === '.zip') {
           try {
-            const zip = new AdmZip(filePath);
+            const zip = new AdmZip(filePath, { decoder: zipDecoder });
 
             // Guard against path traversal (zip-slip): every entry must
             // resolve inside the app directory before we extract.
