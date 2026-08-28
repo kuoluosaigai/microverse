@@ -65,10 +65,17 @@ class ProcessManager {
    * Write a temporary PM2 ecosystem config and schedule its deletion.
    * Shared by all deploy types to avoid duplicated write+cleanup code.
    * Returns the config file path (caller runs `pm2 start <path>`).
+   *
+   * Uses a `.cjs` extension: the config lives inside the app directory, and an
+   * app that ships a `package.json` with `"type": "module"` (Vite/ESM static
+   * sites) would otherwise make Node treat a `.js` file as an ES module — PM2
+   * then `require()`s it and dies with "module is not defined". `.cjs` is
+   * always loaded as CommonJS regardless of the app's package.json, and PM2's
+   * `Common.knonwConfigFileExtensions` recognizes `.config.cjs` as a JS config.
    */
   static writeEcosystemConfig(appPath, name, appsEntry) {
     const ecosystemConfig = { apps: [appsEntry] };
-    const configPath = path.join(appPath, `pm2.${name}.config.js`);
+    const configPath = path.join(appPath, `pm2.${name}.config.cjs`);
     fs.writeFileSync(
       configPath,
       `module.exports = ${JSON.stringify(ecosystemConfig, null, 2)}`

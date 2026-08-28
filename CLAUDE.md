@@ -157,7 +157,8 @@ Config is validated on startup; invalid config throws immediately.
 
 When deploying apps, temporary PM2 ecosystem config files are created in app directories:
 ```javascript
-// Temporary file: apps/<app-name>/pm2.<app-name>.config.js
+// Temporary file: apps/<app-name>/pm2.<app-name>.config.cjs
+// (.cjs so it stays CommonJS even if the app's package.json sets "type": "module")
 {
   apps: [{
     name: 'app-name',
