@@ -88,3 +88,33 @@ test('no-op (null) when the single entry is a file', () => {
 test('no-op (null) when directory does not exist', () => {
   assert.equal(flattenTopDirs(path.join(os.tmpdir(), 'flatten-nonexistent-xyz')), null);
 });
+
+test('flattens the wrapper while ignoring platform entries (node_modules)', () => {
+  const dir = makeDir();
+  const wrapper = path.join(dir, 'repo-main');
+  fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+  fs.mkdirSync(path.join(wrapper, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(wrapper, 'package.json'), '{}');
+  fs.writeFileSync(path.join(wrapper, 'src', 'index.js'), 'x');
+  try {
+    const flattened = flattenTopDirs(dir, new Set(['node_modules']));
+    assert.equal(flattened, 'repo-main');
+    assert.ok(fs.existsSync(path.join(dir, 'package.json')), 'package.json hoisted to root');
+    assert.ok(fs.existsSync(path.join(dir, 'node_modules')), 'node_modules preserved');
+    assert.ok(!fs.existsSync(wrapper), 'wrapper removed');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no-op when multiple non-ignored top-level entries remain', () => {
+  const dir = makeDir();
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  fs.mkdirSync(path.join(dir, 'a'));
+  fs.mkdirSync(path.join(dir, 'b'));
+  try {
+    assert.equal(flattenTopDirs(dir, new Set(['node_modules'])), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

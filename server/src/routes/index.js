@@ -17,7 +17,7 @@ const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenTopDirs } = require('../utils/flatten-zip-root');
 const zipDecoder = require('../utils/zip-decoder');
-const { staleFilesToRemove } = require('../utils/stale-files');
+const { staleFilesToRemove, platformManagedNames } = require('../utils/stale-files');
 const { queries } = require('../db');
 const ProxyManager = require('../services/proxy-manager');
 
@@ -560,7 +560,7 @@ router.post('/apps/:id/upload', async (req, res, next) => {
             // folders (common with GitHub/IDE zips), hoist their contents up so
             // index.html etc. land directly under the app directory. Returns the
             // unwrapped path prefix when it flattened (used below), or null.
-            const flattenedPrefix = flattenTopDirs(app.path);
+            const flattenedPrefix = flattenTopDirs(app.path, platformManagedNames(app));
 
             // Reported file names should match the on-disk paths. When wrappers
             // were flattened, strip their prefix and drop the wrapper dir entries

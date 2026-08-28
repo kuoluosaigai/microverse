@@ -64,3 +64,27 @@ test('an individual (non-zip) upload does not clear existing files', async () =>
 
   await agent.delete(`/api/apps/${id}`).expect(200);
 });
+
+test('a wrapper zip flattens even when node_modules is preserved from a prior deploy', async () => {
+  const created = await agent.post('/api/apps').send({ name: 'upload-npm-reup', deploy_type: 'npm' });
+  const id = created.body.data.id;
+  const app = await queries.getAppById(id);
+
+  // A previous deploy would have installed deps into node_modules.
+  fs.mkdirSync(path.join(app.path, 'node_modules', 'pkg'), { recursive: true });
+
+  // GitHub-style npm zip: repo-main/ wrapper holding package.json.
+  const zip = new AdmZip();
+  zip.addFile('repo-main/package.json', Buffer.from(JSON.stringify({ name: 'x', scripts: { start: 'node index.js' } })));
+  zip.addFile('repo-main/index.js', Buffer.from('x'));
+
+  await agent.post(`/api/apps/${id}/upload`)
+    .attach('files', zip.toBuffer(), 'repo.zip')
+    .expect(200);
+
+  assert.ok(fs.existsSync(path.join(app.path, 'package.json')), 'package.json flattened to root');
+  assert.ok(!fs.existsSync(path.join(app.path, 'repo-main')), 'wrapper removed');
+  assert.ok(fs.existsSync(path.join(app.path, 'node_modules')), 'node_modules preserved');
+
+  await agent.delete(`/api/apps/${id}`).expect(200);
+});
