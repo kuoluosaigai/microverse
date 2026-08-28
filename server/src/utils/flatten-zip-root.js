@@ -2,35 +2,44 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * If `dir` contains exactly one entry and it is a directory, move that
- * directory's children up into `dir` and remove the now-empty wrapper.
- * Handles the common "zip wraps everything in a top-level folder" case
- * (GitHub/IDE-style zips). No-op otherwise (multiple top-level entries, or a
- * single file — ambiguous, leave as-is).
+ * Iteratively hoist a zip's leading single-directory wrappers up into `dir`.
  *
- * Safe by construction: we only act when `dir`'s sole entry is the wrapper, so
- * there is nothing else at the top level to collide with during the hoist.
+ * GitHub/IDE zips often wrap their contents in a top-level folder, and that
+ * folder can nest several levels deep (e.g. `repo-main/dist/index.html`). As
+ * long as `dir` contains exactly one entry and it is a directory, that level is
+ * unambiguous to unwrap: hoist its children up into `dir`, drop the now-empty
+ * wrapper, and repeat. Stop at the first level that is NOT a lone directory
+ * (multiple entries, a single file, or empty) — that's ambiguous, so leave it
+ * as-is rather than guess which folder is the web root.
+ *
+ * Safe by construction: each step only acts when the sole entry is the wrapper,
+ * so there is nothing else at that level to collide with during the hoist.
  *
  * @param {string} dir absolute directory path
- * @returns {string|null} the wrapper folder name if one was flattened, else null
+ * @returns {string|null} the unwrapped path prefix (e.g. 'repo-main/dist') if
+ *   any wrappers were flattened, else null. Joined with '/' so it matches the
+ *   forward-slash entry names adm-zip reports.
  */
-function flattenSingleTopDir(dir) {
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (_e) {
-    return null;
-  }
-  if (entries.length !== 1 || !entries[0].isDirectory()) return null;
+function flattenTopDirs(dir) {
+  const stripped = [];
+  for (;;) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_e) {
+      return null;
+    }
+    if (entries.length !== 1 || !entries[0].isDirectory()) break;
 
-  const wrapperName = entries[0].name;
-  const wrapper = path.join(dir, wrapperName);
-  const children = fs.readdirSync(wrapper, { withFileTypes: true });
-  for (const child of children) {
-    fs.renameSync(path.join(wrapper, child.name), path.join(dir, child.name));
+    const wrapper = path.join(dir, entries[0].name);
+    const children = fs.readdirSync(wrapper, { withFileTypes: true });
+    for (const child of children) {
+      fs.renameSync(path.join(wrapper, child.name), path.join(dir, child.name));
+    }
+    fs.rmdirSync(wrapper); // empty now
+    stripped.push(entries[0].name);
   }
-  fs.rmdirSync(wrapper); // empty now
-  return wrapperName;
+  return stripped.length > 0 ? stripped.join('/') : null;
 }
 
-module.exports = { flattenSingleTopDir };
+module.exports = { flattenTopDirs };

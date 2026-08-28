@@ -15,7 +15,7 @@ const { requireAuth } = require('../middleware/auth');
 const { loginLimiter, apiLimiter } = require('../middleware/rate-limit');
 const { isSafeEntry } = require('../utils/validate-zip');
 const { validateEnvEntries } = require('../utils/validate-env');
-const { flattenSingleTopDir } = require('../utils/flatten-zip-root');
+const { flattenTopDirs } = require('../utils/flatten-zip-root');
 const { queries } = require('../db');
 const ProxyManager = require('../services/proxy-manager');
 
@@ -531,19 +531,19 @@ router.post('/apps/:id/upload', async (req, res, next) => {
 
             zip.extractAllTo(app.path, true);
 
-            // If the zip wrapped everything in a single top-level folder
-            // (common with GitHub/IDE zips), hoist its contents up one level
-            // so index.html etc. land directly under the app directory. Returns
-            // the wrapper name when it flattened (used below), or null otherwise.
-            const flattenedWrapper = flattenSingleTopDir(app.path);
+            // If the zip wrapped everything in one or more nested top-level
+            // folders (common with GitHub/IDE zips), hoist their contents up so
+            // index.html etc. land directly under the app directory. Returns the
+            // unwrapped path prefix when it flattened (used below), or null.
+            const flattenedPrefix = flattenTopDirs(app.path);
 
-            // Reported file names should match the on-disk paths. When a wrapper
-            // was flattened, strip its prefix and drop the wrapper dir entry
-            // itself (which collapses to ''). Otherwise the list is the entry
+            // Reported file names should match the on-disk paths. When wrappers
+            // were flattened, strip their prefix and drop the wrapper dir entries
+            // themselves (which collapse to ''). Otherwise the list is the entry
             // names verbatim.
             let extractedFiles = entries.map(entry => entry.entryName);
-            if (flattenedWrapper) {
-              const prefix = flattenedWrapper + '/';
+            if (flattenedPrefix) {
+              const prefix = flattenedPrefix + '/';
               extractedFiles = extractedFiles
                 .map(name => name.startsWith(prefix) ? name.slice(prefix.length) : name)
                 .filter(name => name.length > 0);
