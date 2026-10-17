@@ -208,8 +208,11 @@ const queries = {
 
   getUserByUsername: (username) => dbGet('SELECT * FROM users WHERE username = ?', [username]),
 
+  // Idempotent seed: under PM2 cluster several workers call ensureAdmin at boot
+  // and all may pass the count check before any insert lands. ON CONFLICT makes
+  // the duplicate inserts no-ops (changes=0) instead of UNIQUE-constraint errors.
   createUser: (username, passwordHash) => dbRun(
-    'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+    'INSERT INTO users (username, password_hash) VALUES (?, ?) ON CONFLICT(username) DO NOTHING',
     [username, passwordHash]
   )
 };

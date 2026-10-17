@@ -24,8 +24,13 @@ class AuthManager {
         return;
       }
       const passwordHash = await bcrypt.hash(password, 10);
-      await queries.createUser(username, passwordHash);
-      console.log(`✓ Admin user '${username}' seeded. (To change the password, delete the users row and restart with a new ADMIN_PASSWORD.)`);
+      // INSERT ... ON CONFLICT DO NOTHING: with several cluster workers racing
+      // here, the winner gets changes=1 and logs; the losers get changes=0 and
+      // stay silent (no UNIQUE-constraint errors in the boot log).
+      const result = await queries.createUser(username, passwordHash);
+      if (result.changes > 0) {
+        console.log(`✓ Admin user '${username}' seeded. (To change the password, delete the users row and restart with a new ADMIN_PASSWORD.)`);
+      }
     } catch (err) {
       // Never crash boot over seeding — warn and continue.
       console.warn(`ensureAdmin failed: ${err.message}`);
