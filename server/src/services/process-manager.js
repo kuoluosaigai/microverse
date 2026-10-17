@@ -14,34 +14,78 @@ const execPromise = util.promisify(exec);
 
 class ProcessManager {
   /**
+   * Resolve the real npm global root via `npm root -g` (covers nvm / fnm /
+   * volta / custom prefixes that the hardcoded candidates miss). Process-lifetime
+   * cached — spawns npm at most once, and only when cheaper candidates miss.
+   * @returns {string|null}
+   */
+  static npmGlobalRoot() {
+    if (this._npmGlobalRoot === undefined) {
+      this._npmGlobalRoot = null;
+      try {
+        const { execSync } = require('child_process');
+        const out = execSync('npm root -g', {
+          encoding: 'utf8',
+          timeout: 15000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        if (out) this._npmGlobalRoot = out;
+      } catch (_err) { /* npm not installed / not on PATH — stay null */ }
+    }
+    return this._npmGlobalRoot;
+  }
+
+  /**
    * Resolve a CLI module's JS entry file across local/global node_modules.
    * Returns an absolute path when found, or null so the caller can fall back
    * to a bare command (works on Linux/macOS, but NOT in PM2 fork mode on Windows).
+   *
+   * Candidates, cheapest first (all plain fs checks until the last one):
+   *   1. cwd node_modules               — direct install under the launch dir
+   *   2. repo-root node_modules         — npm workspaces hoists server deps here
+   *   3. global root beside the running node binary — the layout nvm/fnm/volta
+   *      and the Windows official installer use (globals live next to node.exe
+   *      / under its ../lib on POSIX)
+   *   4. %APPDATA%/npm/node_modules     — Windows npm default prefix
+   *   5. ~/.npm-global                  — common manual prefix
+   *   6. /usr/local/lib/node_modules    — classic Unix default
+   *   7. `npm root -g` (cached spawn)   — authoritative for custom prefixes
    */
   static resolveCliModule(relativePath) {
-    // 1. Local (project) node_modules
-    const localPath = path.join(process.cwd(), 'node_modules', relativePath);
-    if (fs.existsSync(localPath)) {
-      return localPath;
-    }
-
-    // 2. Global node_modules at the platform-specific install root
-    const globalRoot = process.platform === 'win32'
-      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules')
-      : path.join(os.homedir(), '.npm-global', 'node_modules');
-    const globalPath = path.join(globalRoot, relativePath);
-    if (fs.existsSync(globalPath)) {
-      return globalPath;
-    }
-
-    // 3. Unix fallback: /usr/local global root (common default)
+    const roots = [
+      path.join(process.cwd(), 'node_modules'),
+      // server/src/services -> server/src -> server -> repo root
+      path.join(__dirname, '..', '..', '..', 'node_modules'),
+    ];
+    const nodeBinDir = path.dirname(process.execPath);
+    roots.push(
+      process.platform === 'win32'
+        ? path.join(nodeBinDir, 'node_modules')
+        : path.join(nodeBinDir, '..', 'lib', 'node_modules')
+    );
+    roots.push(
+      process.platform === 'win32'
+        ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules')
+        : path.join(os.homedir(), '.npm-global', 'node_modules')
+    );
     if (process.platform !== 'win32') {
-      const unixGlobal = path.join('/usr', 'local', 'lib', 'node_modules', relativePath);
-      if (fs.existsSync(unixGlobal)) {
-        return unixGlobal;
+      roots.push(path.join('/usr', 'local', 'lib', 'node_modules'));
+    }
+
+    for (const root of roots) {
+      const p = path.join(root, relativePath);
+      if (fs.existsSync(p)) {
+        return p;
       }
     }
 
+    // Last resort (cached): the real global prefix, which no static candidate
+    // is guaranteed to know. Spawns `npm root -g` at most once per process.
+    const npmRoot = this.npmGlobalRoot();
+    if (npmRoot) {
+      const p = path.join(npmRoot, relativePath);
+      if (fs.existsSync(p)) return p;
+    }
     return null;
   }
 
