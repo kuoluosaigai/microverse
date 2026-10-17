@@ -2,7 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
-const { sanitizeFilename, uniqueFilename } = require('../utils/sanitize-filename');
+const { sanitizeFilename, uniqueInRequest } = require('../utils/sanitize-filename');
 
 /**
  * Multer configuration for file uploads
@@ -29,15 +29,19 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     // Harden the client-supplied name (traversal, NUL/control chars, Windows
-    // reserved names/chars, over-long names), then de-duplicate against what is
-    // already on disk AND against names handed out earlier in THIS request —
-    // multer fires all filename() callbacks before the first write stream
-    // opens, so the in-request set is what catches same-request duplicates.
-    const sanitized = sanitizeFilename(file.originalname);
-    const dir = req.uploadPath || process.cwd();
-    if (!req._assignedFilenames) req._assignedFilenames = new Set();
-    const name = uniqueFilename(dir, sanitized, req._assignedFilenames);
-    req._assignedFilenames.add(name);
+    // reserved names/chars, over-long names).
+    //
+    // CROSS-request collisions are intentional: re-uploading "index.html" is
+    // how a user updates the file the app serves, so the sanitized name is
+    // used as-is and the later write replaces the earlier one.
+    //
+    // SAME-request collisions get their own slot ("index (1).html"): multer
+    // opens one write stream per part, and two parts sharing one path
+    // interleave their bytes into a corrupt merge. The reserved-name Set lives
+    // on req, so it spans exactly one request.
+    if (!req._requestFilenames) req._requestFilenames = new Set();
+    const name = uniqueInRequest(req._requestFilenames, sanitizeFilename(file.originalname));
+    req._requestFilenames.add(name);
     cb(null, name);
   }
 });

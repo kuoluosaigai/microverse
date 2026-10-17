@@ -99,7 +99,10 @@ CREATE TABLE IF NOT EXISTS metrics (
   ts INTEGER NOT NULL,
   cpu REAL NOT NULL,
   memory INTEGER NOT NULL,
-  uptime_ms INTEGER
+  uptime_ms INTEGER,
+  -- Cascade with the app row (apps.name is UNIQUE): deleting an app removes its
+  -- samples, so a later app reusing the name never inherits stale metrics.
+  FOREIGN KEY (app_name) REFERENCES apps(name) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_app_ts ON metrics(app_name, ts);

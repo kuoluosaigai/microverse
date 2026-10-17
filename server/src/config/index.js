@@ -9,10 +9,24 @@ dotenv.config({ path: path.join(__dirname, '../../..', '.env') });
  * Loads settings from environment variables with sensible defaults
  */
 
+// Strict integer env parsing: an UNSET or empty var takes the default, but a
+// SET non-integer ("abc", "12abc", "5.5") throws at boot. The old
+// `parseInt(x) || fallback` silently swallowed typos — APP_PORT_MIN=abc booted
+// with 3000 and the operator never learned their .env was ignored.
+const intFromEnv = (name, fallback) => {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n)) {
+    throw new Error(`Invalid ${name}: expected an integer, got "${raw}"`);
+  }
+  return n;
+};
+
 const config = {
   // Server configuration
   server: {
-    port: parseInt(process.env.PORT) || 5000,
+    port: intFromEnv('PORT', 5000),
     host: process.env.HOST || '0.0.0.0',
     nodeEnv: process.env.NODE_ENV || 'development'
   },
@@ -31,20 +45,20 @@ const config = {
   // Application deployment configuration
   deployment: {
     // Port range for deployed apps
-    portRangeMin: parseInt(process.env.APP_PORT_MIN) || 3000,
-    portRangeMax: parseInt(process.env.APP_PORT_MAX) || 9000,
+    portRangeMin: intFromEnv('APP_PORT_MIN', 3000),
+    portRangeMax: intFromEnv('APP_PORT_MAX', 9000),
 
     // Default ports for different deploy types
     defaultHttpServerPort: 8080,
     defaultNpmPort: 3000,
 
     // File upload limits
-    maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 100 * 1024 * 1024, // 100MB
-    maxFiles: parseInt(process.env.MAX_FILES) || 100,
+    maxFileSize: intFromEnv('MAX_FILE_SIZE', 100 * 1024 * 1024), // 100MB
+    maxFiles: intFromEnv('MAX_FILES', 100),
 
     // npm install / build timeouts (ms)
-    npmInstallTimeoutMs: parseInt(process.env.NPM_INSTALL_TIMEOUT_MS) || 300000,
-    npmBuildTimeoutMs: parseInt(process.env.NPM_BUILD_TIMEOUT_MS) || 300000,
+    npmInstallTimeoutMs: intFromEnv('NPM_INSTALL_TIMEOUT_MS', 300000),
+    npmBuildTimeoutMs: intFromEnv('NPM_BUILD_TIMEOUT_MS', 300000),
 
     // nginx binary path (default 'nginx' = PATH; set NGINX_BIN for non-PATH installs)
     nginxBin: process.env.NGINX_BIN || 'nginx',
@@ -67,9 +81,10 @@ const config = {
     proxySslCert: process.env.PROXY_SSL_CERT || '',
     proxySslCertKey: process.env.PROXY_SSL_CERT_KEY || '',
 
-    // metrics sampler (resource monitoring): PM2 poll interval + ring-buffer cap
-    metricsIntervalMs: parseInt(process.env.METRICS_INTERVAL_MS) || 10000,
-    metricsMaxSamples: parseInt(process.env.METRICS_MAX_SAMPLES) || 180
+    // metrics sampler (resource monitoring): PM2 poll interval + per-app
+    // retention cap (rows in the shared SQLite metrics table)
+    metricsIntervalMs: intFromEnv('METRICS_INTERVAL_MS', 10000),
+    metricsMaxSamples: intFromEnv('METRICS_MAX_SAMPLES', 180)
   },
 
   // PM2 configuration

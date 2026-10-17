@@ -211,6 +211,11 @@ const queries = {
     [appName]
   ),
 
+  // Remove every sample for an app. The FK cascade covers databases created
+  // with the current schema; this explicit delete also covers DBs whose metrics
+  // table predates the FK (CREATE TABLE IF NOT EXISTS never rebuilds it).
+  deleteMetricsForApp: (appName) => dbRun('DELETE FROM metrics WHERE app_name = ?', [appName]),
+
   // Keep only the newest `keep` samples for an app (ring-buffer semantics).
   pruneMetrics: (appName, keep) => dbRun(
     `DELETE FROM metrics WHERE app_name = ? AND id NOT IN (

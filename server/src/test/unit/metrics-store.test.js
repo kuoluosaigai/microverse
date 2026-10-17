@@ -40,3 +40,14 @@ test('tie on identical ts resolves deterministically (last insert wins)', async 
   const latest = await metricsSampler.getLatest(name);
   assert.equal(latest.cpu, 20); // ORDER BY ts DESC, id DESC
 });
+
+test('deleting an app removes its metrics (no stale inheritance for a reused name)', async () => {
+  const AppManager = require('../../services/app-manager');
+  const app = await AppManager.createApp('metrics-cascade-app', 'http-server');
+  await queries.insertMetric(app.name, { ts: 9000, cpu: 5, memory: 50, uptimeMs: 1 });
+  assert.ok(await metricsSampler.getLatest(app.name));
+
+  await AppManager.deleteApp(app.id);
+  assert.equal(await metricsSampler.getLatest(app.name), null);
+  assert.deepEqual(await metricsSampler.getHistory(app.name), []);
+});

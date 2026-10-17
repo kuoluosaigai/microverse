@@ -15,9 +15,15 @@ const { queries } = require('../db');
  *
  * Sample = { ts:number(epoch ms), cpu:number(%), memory:number(bytes), uptimeMs:number }
  */
+// Prune every Nth tick instead of every tick: retention overshoots the cap by
+// at most (N-1) ticks of samples between prunes, while cutting the per-tick
+// DELETE...NOT IN(SELECT) bookkeeping on the shared DB connection by N.
+const PRUNE_EVERY_TICKS = 6;
+
 class MetricsSampler {
   constructor() {
     this.timer = null;
+    this.tickCount = 0;
   }
 
   start() {
@@ -37,6 +43,8 @@ class MetricsSampler {
 
   async _tick() {
     const cap = config.deployment.metricsMaxSamples;
+    this.tickCount += 1;
+    const prune = this.tickCount % PRUNE_EVERY_TICKS === 1; // first tick + every 6th
     try {
       const all = await ProcessManager.getAllProcessStatus();
       const ts = Date.now();
@@ -51,7 +59,9 @@ class MetricsSampler {
           memory: p.memory,
           uptimeMs: p.uptime ? ts - p.uptime : 0,
         });
-        await queries.pruneMetrics(p.name, cap);
+        if (prune) {
+          await queries.pruneMetrics(p.name, cap);
+        }
       }
     } catch (err) {
       // PM2 unavailable or jlist failed — warn and skip; never crash the loop.

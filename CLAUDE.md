@@ -200,7 +200,7 @@ Key endpoints:
 - `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard; single top-level folder auto-flattened; a zip upload replaces prior user content — stale files removed, platform files like `node_modules`/nginx conf preserved)
 - `GET /api/apps/:id/backup` - Download per-app backup zip (files + manifest)
 - `POST /api/apps/restore` - Restore app from backup zip (validates first, rolls back on failure, 400 on name clash)
-- `POST /api/apps/:id/default-app` - Mark/unmark a running app as the root-domain default (regenerates edge proxy)
+- `PUT|DELETE /api/apps/:id/default` - Mark/unmark an app as the root-domain default (single-default; regenerates edge proxy)
 - `POST /api/auth/login` | `POST /api/auth/logout` | `GET /api/auth/me` - Single-admin session
 
 Auth: `requireAuth` gates `/api/apps*`; `/health`, `/config`, `/auth/login` are public. Rate-limited: login 5/15min/IP, API 100/min/IP (SSE exempt). Interactive API docs: swagger-ui-express at `/api-docs`; spec at `/openapi.json`.

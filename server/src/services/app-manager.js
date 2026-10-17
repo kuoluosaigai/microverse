@@ -98,9 +98,12 @@ class AppManager {
   }
 
   /**
-   * Delete application
+   * Delete application.
+   * @param {number} id
+   * @param {{skipProxyRegenerate?: boolean}} [options] set by DeployManager when
+   *   its status reconcile already regenerated the edge conf moments ago.
    */
-  static async deleteApp(id) {
+  static async deleteApp(id, options = {}) {
     const app = await this.getAppById(id);
 
     // Check if app is running
@@ -117,10 +120,14 @@ class AppManager {
       console.warn(`Could not remove PM2 process for '${app.name}': ${err.message}`);
     }
 
-    // Delete from database
+    // Delete from database (metrics rows cascade via FK; the explicit delete
+    // covers DBs whose metrics table predates the FK).
     await queries.deleteApp(id);
+    await queries.deleteMetricsForApp(app.name).catch(() => { /* best-effort */ });
 
-    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after delete failed: ${e.message}`); }
+    if (!options.skipProxyRegenerate) {
+      try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after delete failed: ${e.message}`); }
+    }
 
     // Note: We don't delete the app directory to prevent data loss
     // User should manually delete if needed

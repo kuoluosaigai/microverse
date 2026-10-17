@@ -2,6 +2,7 @@ const config = require('./config');
 const { createApp } = require('./app');
 const { dbReady } = require('./db');
 const NginxLifecycle = require('./services/nginx-lifecycle');
+const ProcessManager = require('./services/process-manager');
 const metricsSampler = require('./services/metrics-sampler');
 const AuthManager = require('./services/auth-manager');
 const ProxyManager = require('./services/proxy-manager');
@@ -25,6 +26,9 @@ const server = app.listen(config.server.port, config.server.host, () => {
   NginxLifecycle.probe().then(({ ok, message }) => {
     if (!ok) console.warn('⚠ ' + message);
   });
+
+  // Resolve the npm global prefix off the request path (see warmNpmGlobalRoot).
+  ProcessManager.warmNpmGlobalRoot().catch(() => { /* sync fallback remains */ });
 
   // Single-writer metrics sampling: under PM2 cluster only instance 0 polls
   // PM2 and writes to the shared SQLite metrics table; every worker serves

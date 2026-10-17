@@ -91,19 +91,47 @@ class ProcessManager {
   }
 
   /**
-   * Get http-server executable path (cross-platform)
+   * Get http-server executable path (cross-platform), memoized — resolveCliModule
+   * runs up to 6 existsSync checks (plus a cached `npm root -g` on total miss).
    * Uses the JS entry directly (not the .cmd wrapper) so PM2 fork mode works on Windows.
    */
   static getHttpServerPath() {
-    return this.resolveCliModule('http-server/bin/http-server') || 'http-server';
+    if (this._httpServerPath === undefined) {
+      this._httpServerPath = this.resolveCliModule('http-server/bin/http-server') || 'http-server';
+    }
+    return this._httpServerPath;
   }
 
   /**
-   * Get npm CLI JS entry path (cross-platform)
+   * Get npm CLI JS entry path (cross-platform), memoized.
    * Avoids the .cmd wrapper problem on Windows, same approach as http-server.
    */
   static getNpmCliPath() {
-    return this.resolveCliModule('npm/bin/npm-cli.js') || 'npm';
+    if (this._npmCliPath === undefined) {
+      this._npmCliPath = this.resolveCliModule('npm/bin/npm-cli.js') || 'npm';
+    }
+    return this._npmCliPath;
+  }
+
+  /**
+   * Boot-time warmup (fire-and-forget, called from server.js): resolve the real
+   * npm global prefix ASYNCHRONOUSLY so the synchronous `npm root -g` fallback
+   * inside resolveCliModule never lands on the request path. On hosts where
+   * pm2/http-server live under a version-manager prefix, a cold resolve during
+   * a request would otherwise block that worker's event loop for up to 15s.
+   * Failure is fine — the sync fallback still works, just slower the first time.
+   */
+  static warmNpmGlobalRoot() {
+    if (this._npmGlobalRoot !== undefined) return Promise.resolve(this._npmGlobalRoot);
+    const npmCli = this.getNpmCliPath();
+    if (npmCli === 'npm') return Promise.resolve(null);
+    return execFilePromise(process.execPath, [npmCli, 'root', '-g'], { timeout: 15000 })
+      .then(({ stdout }) => {
+        const out = String(stdout).trim();
+        this._npmGlobalRoot = out || null;
+        return this._npmGlobalRoot;
+      })
+      .catch(() => null);
   }
 
   /**

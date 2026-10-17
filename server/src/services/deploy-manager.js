@@ -7,6 +7,12 @@ const { queries } = require('../db');
 const config = require('../config');
 const { createExclusive } = require('../utils/serialize');
 
+// Marks an app row whose status reconcileStatus just flipped running->stopped
+// (and whose edge-proxy config was therefore already regenerated). Symbol keys
+// are invisible to JSON.stringify, so flagged rows serialize cleanly in API
+// responses.
+const PROXY_ALREADY_REGENERATED = Symbol('proxyAlreadyRegenerated');
+
 // Serializes the port-allocation critical section across concurrent deployApp
 // calls so two never read the same "claimed" set and pick the same port.
 // Process-local: sufficient for the single-instance, single-admin deployment.
@@ -41,6 +47,17 @@ class DeployManager {
     if (app.status !== actual) {
       await queries.updateAppStatus(actual, appId);
       app.status = actual;
+      // A running->stopped flip means the process died behind our back; the
+      // edge proxy may still route its subdomain to a dead port. Regenerate
+      // best-effort to keep the "proxy reflects running apps" invariant, and
+      // flag the row so deleteApp doesn't reload nginx a second time for the
+      // same (already correct) conf.
+      if (actual === 'stopped') {
+        try {
+          await ProxyManager.regenerate();
+          app[PROXY_ALREADY_REGENERATED] = true;
+        } catch (e) { console.warn(`[proxy] regenerate after status reconcile failed: ${e.message}`); }
+      }
     }
     return app;
   }
@@ -173,8 +190,11 @@ class DeployManager {
    * the AppManager guard still protects genuinely running apps.
    */
   static async deleteApp(appId) {
-    await this.reconcileStatus(appId);
-    return AppManager.deleteApp(appId);
+    const app = await this.reconcileStatus(appId);
+    // When reconcile flipped the status and already regenerated, the conf on
+    // disk no longer references this app — skip AppManager's second regenerate
+    // (one nginx write/validate/reload cycle per delete instead of two).
+    return AppManager.deleteApp(appId, { skipProxyRegenerate: !!app[PROXY_ALREADY_REGENERATED] });
   }
 
   /**

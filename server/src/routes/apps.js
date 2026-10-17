@@ -449,78 +449,89 @@ router.post('/apps/:id/upload', async (req, res, next) => {
         });
       }
 
+      // The names multer actually wrote. multer hands out one path per
+      // (sanitized) name, so several parts with the same name collapse onto the
+      // same file — the basename list is therefore de-duplicated, and the count
+      // reported to the user is the number of files that now exist, not parts.
+      const writtenNames = [...new Set(req.files.map(f => path.basename(f.filename)))];
+
       // A zip upload is a full-content replacement: remove stale user files left
       // over from a previous deploy, but keep platform-managed entries
       // (node_modules, nginx conf/pid/logs) and the files just written here.
-      const hasZip = req.files.some(f => path.extname(f.filename).toLowerCase() === '.zip');
+      const hasZip = writtenNames.some(n => path.extname(n).toLowerCase() === '.zip');
       if (hasZip) {
-        const stale = staleFilesToRemove(app, beforeFiles, req.files.map(f => f.filename));
+        const stale = staleFilesToRemove(app, beforeFiles, writtenNames);
         for (const name of stale) {
           fs.rmSync(path.join(app.path, name), { recursive: true, force: true });
         }
       }
 
       const uploadedFiles = [];
+      const addFile = (name) => {
+        if (!uploadedFiles.includes(name)) uploadedFiles.push(name);
+      };
 
       // Process each file
       for (const file of req.files) {
-        const filePath = path.join(app.path, file.filename);
-        uploadedFiles.push(file.filename);
+        const name = path.basename(file.filename);
+        const filePath = path.join(app.path, name);
 
         // If ZIP file, extract it
-        if (path.extname(file.filename).toLowerCase() === '.zip') {
-          try {
-            const zip = new AdmZip(filePath, { decoder: zipDecoder });
+        if (path.extname(name).toLowerCase() !== '.zip') {
+          addFile(name);
+          continue;
+        }
 
-            // Guard against path traversal (zip-slip): every entry must
-            // resolve inside the app directory before we extract.
-            const entries = zip.getEntries();
-            for (const entry of entries) {
-              if (!isSafeEntry(app.path, entry.entryName)) {
-                throw new Error(`Unsafe zip entry path: ${entry.entryName}`);
-              }
+        // Two parts named "x.zip" share one path: the first iteration extracts
+        // and removes it, so skip the (now missing) duplicate instead of failing.
+        if (!fs.existsSync(filePath)) continue;
+
+        try {
+          const zip = new AdmZip(filePath, { decoder: zipDecoder });
+
+          // Guard against path traversal (zip-slip): every entry must
+          // resolve inside the app directory before we extract.
+          const entries = zip.getEntries();
+          for (const entry of entries) {
+            if (!isSafeEntry(app.path, entry.entryName)) {
+              throw new Error(`Unsafe zip entry path: ${entry.entryName}`);
             }
-
-            zip.extractAllTo(app.path, true);
-
-            // Delete the uploaded .zip BEFORE flattening. multer writes the
-            // archive directly into app.path, so leaving it here makes
-            // readdirSync(app.path) see two entries (the archive + the extracted
-            // wrapper folder) and flattenTopDirs bails out — leaving index.html
-            // buried under repo-main/ and deploy validation failing.
-            fs.unlinkSync(filePath);
-
-            // If the zip wrapped everything in one or more nested top-level
-            // folders (common with GitHub/IDE zips), hoist their contents up so
-            // index.html etc. land directly under the app directory. Returns the
-            // unwrapped path prefix when it flattened (used below), or null.
-            const flattenedPrefix = flattenTopDirs(app.path, platformManagedNames(app));
-
-            // Reported file names should match the on-disk paths. When wrappers
-            // were flattened, strip their prefix and drop the wrapper dir entries
-            // themselves (which collapse to ''). Otherwise the list is the entry
-            // names verbatim.
-            let extractedFiles = entries.map(entry => entry.entryName);
-            if (flattenedPrefix) {
-              const prefix = flattenedPrefix + '/';
-              extractedFiles = extractedFiles
-                .map(name => name.startsWith(prefix) ? name.slice(prefix.length) : name)
-                .filter(name => name.length > 0);
-            }
-            uploadedFiles.push(...extractedFiles);
-
-            // Remove ZIP from uploaded files list
-            const zipIndex = uploadedFiles.indexOf(file.filename);
-            if (zipIndex > -1) {
-              uploadedFiles.splice(zipIndex, 1);
-            }
-          } catch (zipError) {
-            console.error('ZIP extraction error:', zipError);
-            return res.status(400).json({
-              success: false,
-              error: { message: 'Failed to extract ZIP file' }
-            });
           }
+
+          zip.extractAllTo(app.path, true);
+
+          // Delete the uploaded .zip BEFORE flattening. multer writes the
+          // archive directly into app.path, so leaving it here makes
+          // readdirSync(app.path) see two entries (the archive + the extracted
+          // wrapper folder) and flattenTopDirs bails out — leaving index.html
+          // buried under repo-main/ and deploy validation failing.
+          fs.unlinkSync(filePath);
+
+          // If the zip wrapped everything in one or more nested top-level
+          // folders (common with GitHub/IDE zips), hoist their contents up so
+          // index.html etc. land directly under the app directory. Returns the
+          // unwrapped path prefix when it flattened (used below), or null.
+          const flattenedPrefix = flattenTopDirs(app.path, platformManagedNames(app));
+
+          // Reported file names should match the on-disk paths. When wrappers
+          // were flattened, strip their prefix and drop the wrapper dir entries
+          // themselves (which collapse to ''). Otherwise the list is the entry
+          // names verbatim. The archive itself is never reported — it no longer
+          // exists on disk.
+          let extractedFiles = entries.map(entry => entry.entryName);
+          if (flattenedPrefix) {
+            const prefix = `${flattenedPrefix}/`;
+            extractedFiles = extractedFiles
+              .map(entry => (entry.startsWith(prefix) ? entry.slice(prefix.length) : entry))
+              .filter(entry => entry.length > 0);
+          }
+          extractedFiles.forEach(addFile);
+        } catch (zipError) {
+          console.error('ZIP extraction error:', zipError);
+          return res.status(400).json({
+            success: false,
+            error: { message: 'Failed to extract ZIP file' }
+          });
         }
       }
 

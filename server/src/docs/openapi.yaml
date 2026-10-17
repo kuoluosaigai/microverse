@@ -343,7 +343,7 @@ paths:
     get:
       tags: [Applications]
       summary: Get an app's resource-metrics history
-      description: Returns the in-memory ring buffer of recent CPU/memory samples (default last 30 min, 10s interval).
+      description: Returns recent CPU/memory samples (default newest 180 per app, 10s interval) from the shared SQLite metrics store — identical from every cluster worker and preserved across restarts.
       operationId: getAppMetrics
       parameters:
         - name: id
@@ -368,6 +368,58 @@ paths:
                         cpu: { type: number }
                         memory: { type: integer }
                         uptimeMs: { type: integer }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/default:
+    put:
+      tags: [Applications]
+      operationId: setDefaultApp
+      summary: Mark this app as the root-domain default (single-default; regenerates the edge proxy)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Updated app
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/App' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Applications]
+      operationId: clearDefaultApp
+      summary: Clear the root-domain default flag, then regenerate the edge proxy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Default cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      message: { type: string, example: "Default cleared" }
         '404':
           description: App not found
           content:
