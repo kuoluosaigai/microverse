@@ -4,9 +4,16 @@ const os = require('os');
 const supertest = require('supertest');
 
 // 1. Set env BEFORE any require that transitively loads server/src/db.
-const tmpRoot = path.join(os.tmpdir(), `microverse-test-${process.pid}`);
+// The dir MUST be unique per RUN, not per pid: OSes recycle pids, and a stale
+// `microverse-test-<pid>` from an earlier run would be silently reused — old
+// schema (CREATE TABLE IF NOT EXISTS never migrates), old rows, flaky results
+// that flip with the pid lottery. Cleaned up best-effort on exit.
+const tmpRoot = path.join(os.tmpdir(), `microverse-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 fs.mkdirSync(path.join(tmpRoot, 'db'), { recursive: true });
 fs.mkdirSync(path.join(tmpRoot, 'apps'), { recursive: true });
+process.on('exit', () => {
+  try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
+});
 process.env.DB_PATH = process.env.DB_PATH || path.join(tmpRoot, 'db', 'test.sqlite');
 process.env.SESSION_DB_PATH = process.env.SESSION_DB_PATH || path.join(tmpRoot, 'db', 'test-sessions.sqlite');
 process.env.APPS_DIR = process.env.APPS_DIR || path.join(tmpRoot, 'apps');
