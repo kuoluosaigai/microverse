@@ -2,6 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
+const { sanitizeFilename, uniqueFilename } = require('../utils/sanitize-filename');
 
 /**
  * Multer configuration for file uploads
@@ -27,9 +28,17 @@ const storage = multer.diskStorage({
     cb(null, req.uploadPath);
   },
   filename: (req, file, cb) => {
-    // Sanitize filename: remove path traversal characters
-    const sanitized = file.originalname.replace(/[\/\\]/g, '_');
-    cb(null, sanitized);
+    // Harden the client-supplied name (traversal, NUL/control chars, Windows
+    // reserved names/chars, over-long names), then de-duplicate against what is
+    // already on disk AND against names handed out earlier in THIS request —
+    // multer fires all filename() callbacks before the first write stream
+    // opens, so the in-request set is what catches same-request duplicates.
+    const sanitized = sanitizeFilename(file.originalname);
+    const dir = req.uploadPath || process.cwd();
+    if (!req._assignedFilenames) req._assignedFilenames = new Set();
+    const name = uniqueFilename(dir, sanitized, req._assignedFilenames);
+    req._assignedFilenames.add(name);
+    cb(null, name);
   }
 });
 

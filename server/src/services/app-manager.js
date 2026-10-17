@@ -5,7 +5,6 @@ const NpmLifecycle = require('./npm-lifecycle');
 const ProxyManager = require('./proxy-manager');
 const { isValidAppName } = require('../utils/validate-app-name');
 const fs = require('fs');
-const path = require('path');
 
 /**
  * Application Manager Service
@@ -146,7 +145,9 @@ class AppManager {
   }
 
   /**
-   * Get app directory contents
+   * Get app directory contents (top level). `path` is RELATIVE to the app root
+   * (equal to `name` at this depth) — the server's absolute directory layout is
+   * never exposed to the API consumer.
    */
   static async getAppFiles(id) {
     const app = await this.getAppById(id);
@@ -160,7 +161,7 @@ class AppManager {
     return files.map(file => ({
       name: file.name,
       type: file.isDirectory() ? 'directory' : 'file',
-      path: path.join(app.path, file.name)
+      path: file.name
     }));
   }
 
