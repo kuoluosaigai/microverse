@@ -103,7 +103,7 @@ npm run build:client
 ```env
 NODE_ENV=production
 PORT=5000                            # the port your reverse proxy targets
-SESSION_SECRET=<long random string>  # stable across restarts (else sessions reset)
+SESSION_SECRET=<long random string>  # 生产环境必填 —— 为空时启动会直接失败
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=<initial password>    # bcrypt-hashed on first boot, then ignored
 ```
@@ -123,6 +123,27 @@ npm run pm2:start
 
 > 若要让已部署应用的 **Open**（打开）链接使用你的域名而非 `localhost`，
 > 请设置 `APP_PUBLIC_URL_TEMPLATE`（参见 [配置](#配置)）。
+
+#### 环境说明（真实部署踩坑记录）
+
+整理自一次 openEuler 24.09 / Node 22 / npm 12 的实际部署：
+
+- **npm ≥ 12 的脚本策略**：严格的 `allow-scripts` 配置（你或组织的 `.npmrc`）
+  会拦截安装脚本 —— `sqlite3`（原生绑定）和前端的 `esbuild` 都需要执行安装
+  脚本。请显式放行，否则安装会以 `EALLOWSCRIPTS` 失败。
+- **lockfile 镜像源**：`package-lock.json` 中所有 `resolved` 均指向
+  `registry.npmjs.org`。新版 npm 会把指向其他镜像（如混入的 npmmirror）的
+  `resolved` 视为不受信任的 "remote" 拉取并可能直接拒绝（`EALLOWREMOTE`）。
+  需要使用镜像时请通过 `npm config set registry` 配置，而不是用镜像重新
+  生成/修改 lockfile。
+- **Node 22 上的 sqlite3**：`sqlite3@5.1.7` 依靠 N-API 预编译二进制可用，但
+  `prebuild-install` 需要从 GitHub 下载 —— 网络受限/缓慢时可能超时。可重试、
+  为下载配置代理/镜像，或允许源码编译（需要构建工具链）。
+- **版本管理器下的 PM2 / http-server 全局包**：PM2 必须在服务进程的 `PATH`
+  上（用 `pm2 -v` 验证）；`http-server` 部署类型需要全局安装 `http-server`。
+  nvm/fnm/volta 会把全局包装到 `/usr/local` 之外的位置 —— Microverse 定位
+  这些 CLI 时会解析真实的 `npm root -g` 前缀，但它们仍需安装在运行平台的
+  同一个 node 下（`npm root -g` 可以确认位置）。
 
 ### 反向代理（在 80 端口通过子域名访问）
 

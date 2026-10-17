@@ -191,7 +191,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Applications]
-      summary: Delete an application (must be stopped first)
+      summary: Delete an application (running-check reconciled against PM2; a dead-but-"running" app is cleaned up)
       operationId: deleteApp
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
@@ -220,7 +220,7 @@ paths:
   /apps/{id}/start:
     post:
       tags: [Lifecycle]
-      summary: Start an application (npm apps run install/build first)
+      summary: Start an application (npm apps install/build only when package.json/lockfile or the app tree changed)
       operationId: startApp
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
@@ -251,7 +251,7 @@ paths:
   /apps/{id}/stop:
     post:
       tags: [Lifecycle]
-      summary: Stop a running application
+      summary: Stop an application (idempotent — already stopped or process gone is a no-op success)
       operationId: stopApp
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
@@ -264,11 +264,6 @@ paths:
                 properties:
                   success: { type: boolean, example: true }
                   data: { $ref: '#/components/schemas/App' }
-        '400':
-          description: App is not running
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: App not found
           content:
@@ -623,7 +618,7 @@ components:
           type: string
           enum: [file, directory]
           example: "file"
-        path: { type: string, example: "/data/microverse/apps/my-app/index.html" }
+        path: { type: string, example: "index.html", description: "Relative to the app root (absolute server paths are never exposed)" }
     HealthData:
       type: object
       properties:

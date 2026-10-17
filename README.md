@@ -103,7 +103,7 @@ npm run build:client
 ```env
 NODE_ENV=production
 PORT=5000                            # the port your reverse proxy targets
-SESSION_SECRET=<long random string>  # stable across restarts (else sessions reset)
+SESSION_SECRET=<long random string>  # REQUIRED in production — boot fails fast if empty
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=<initial password>    # bcrypt-hashed on first boot, then ignored
 ```
@@ -125,6 +125,30 @@ npm run pm2:start
 
 > To make deployed-app **Open** links use your domain instead of `localhost`,
 > set `APP_PUBLIC_URL_TEMPLATE` (see [Configuration](#configuration)).
+
+#### Environment notes (real-world deployment gotchas)
+
+Collected from an openEuler 24.09 / Node 22 / npm 12 deployment:
+
+- **npm ≥ 12 script policies**: strict `allow-scripts` setups (yours or your
+  org's `.npmrc`) block install scripts — `sqlite3` (native binding) and the
+  frontend's `esbuild` both need theirs. Allow them explicitly or the install
+  fails with `EALLOWSCRIPTS`.
+- **Lockfile registry**: `package-lock.json` resolves everything from
+  `registry.npmjs.org`. Newer npm treats `resolved` URLs pointing at other
+  registries (e.g. an npmmirror mix-in) as untrusted "remote" fetches and can
+  refuse them (`EALLOWREMOTE`). Use a mirror via `npm config set registry`
+  rather than editing/regenerating the lockfile against a mirror.
+- **sqlite3 on Node 22**: `sqlite3@5.1.7` works via its N-API prebuilt binary,
+  but `prebuild-install` downloads it from GitHub — on slow/restricted networks
+  that can time out. Retry, use a proxy/mirror for the download, or allow a
+  source build (toolchain required).
+- **PM2 / http-server globals under version managers**: PM2 must be on the
+  server process's `PATH` (verify with `pm2 -v`), and `http-server` installs
+  globally for the `http-server` deploy type. nvm/fnm/volta place globals
+  outside `/usr/local` — Microverse resolves the real `npm root -g` prefix when
+  locating these CLIs, but they still must be installed for the same node that
+  runs the platform (`npm root -g` tells you where that is).
 
 ### Reverse proxy (subdomain access on port 80)
 

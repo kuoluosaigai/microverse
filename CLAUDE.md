@@ -84,20 +84,22 @@ Three core orchestration services in `server/src/services/`, plus specialized se
    - Enforces app-name format (`^[A-Za-z0-9_-]{1,64}$`) to block path-traversal/config-injection
 
 2. **ProcessManager** - PM2 process lifecycle
-   - Starts/stops/restarts processes via PM2
+   - Starts/stops/restarts processes via PM2; every PM2 CLI call goes through `ProcessManager.pm2Exec(args)` (execFile + arg arrays, single choke point; Windows runs the resolved JS entry under node because .cmd shims can't be execFile'd)
+   - `resolveCliModule` finds global CLIs (http-server, npm, pm2) across cwd/repo-root/execPath-adjacent/`npm root -g` roots — works under nvm/fnm/volta
    - **Windows-specific**: Uses http-server JS file directly (not CMD wrapper) to avoid PM2 fork mode issues
    - Finds available ports in range (3000-9000); IPv4/IPv6 dual-stack probe, excludes DB-claimed ports
 
 3. **DeployManager** - Orchestration layer
    - Coordinates AppManager and ProcessManager
    - Assigns ports automatically (serialized via `utils/serialize.js#createExclusive` to close the TOCTOU port race)
-   - Syncs database status with actual PM2 process status
+   - Reconciles DB status with PM2 truth before every lifecycle op (`reconcileStatus`): a crashed/externally-deleted process no longer wedges stop/delete; when the PM2 CLI is unreachable the DB status stands
+   - `stopApp` is idempotent (already-stopped → success no-op)
 
 Specialized services:
-- **NpmLifecycle** - npm apps: `npm install` (incl. devDependencies, + optional `npm run build`) before start; resolves user env vars (`app_env` table) into the PM2 ecosystem env.
+- **NpmLifecycle** - npm apps: fingerprint-gated `npm install` (incl. devDependencies) + optional `npm run build` — content hash of `package.json`/lockfile gates install, a stat-based app-tree hash gates build, fingerprints persist in the `app_deploy_state` table so a plain stop→start skips both; resolves user env vars (`app_env` table) into the PM2 ecosystem env.
 - **NginxLifecycle** - `nginx` deploy type: generates per-app nginx server block (pid/log redirected into app dir), runs `nginx -t` preflight, managed by PM2 with `interpreter: 'none'` + `daemon off;`.
 - **LogManager** - SSE log streaming: resolves PM2 log paths per deploy_type, tails with `fs.watch` (byte offset, line buffer, rotation reset). nginx apps tail `nginx-access.log`/`nginx-error.log`.
-- **MetricsSampler** - Resource monitoring: 10s/tick `pm2 jlist`, in-memory ring buffer (180 samples) for CPU/memory.
+- **MetricsSampler** - Resource monitoring: 10s/tick `pm2 jlist` from ONE cluster worker (`NODE_APP_INSTANCE=0`, gated in server.js); samples persist to the shared SQLite `metrics` table (pruned to newest 180/app) so every worker serves identical reads.
 - **AuthManager** - Single-admin auth: bcryptjs verify, seeds admin from env on boot.
 - **BackupManager** - Per-app zip export/import with `microverse-manifest.json` (name/deploy_type/env); restore validates first, rolls back on failure, 400 on name clash.
 - **ProxyManager** - Platform-managed nginx edge reverse proxy (opt-in via `PROXY_ENABLED`): renders subdomain + root-default routes into `PROXY_CONF_FILE`, `nginx -t` then `-s reload`, rolls back on failure. Regenerated on app start/stop/delete and on boot.
@@ -147,7 +149,7 @@ Config hierarchy: `server/src/config/index.js`
 - Deployment: APP_PORT_MIN (3000), APP_PORT_MAX (9000), MAX_FILE_SIZE (100MB), MAX_FILES (100), APP_PUBLIC_URL_TEMPLATE (e.g. `https://{name}.yourdomain.com`; surfaced to UI via `/api/config`, http/https only)
 - Database: DB_PATH (data/microverse.sqlite)
 - PM2: PM2_INSTANCE_NAME (microverse-server)
-- Admin auth: ADMIN_USERNAME, ADMIN_PASSWORD (seeded on first boot only; to reset, delete the `users` row + restart), SESSION_SECRET (REQUIRED under PM2 cluster — otherwise each worker signs with a different key → intermittent 401), SESSION_COOKIE_SECURE (follows PROXY_SSL_ENABLED), SESSION_DB_PATH (data/sessions.sqlite; shared sqlite session store so sessions survive across cluster workers + restarts)
+- Admin auth: ADMIN_USERNAME, ADMIN_PASSWORD (seeded on first boot only, race-free via `ON CONFLICT DO NOTHING`; to reset, delete the `users` row + restart), SESSION_SECRET (REQUIRED under NODE_ENV=production — config validation throws at boot; otherwise each cluster worker signs with a different key → intermittent 401), SESSION_COOKIE_SECURE (follows PROXY_SSL_ENABLED), SESSION_DB_PATH (data/sessions.sqlite; shared sqlite session store so sessions survive across cluster workers + restarts)
 - Nginx: NGINX_BIN (default `nginx` = PATH; used by BOTH the nginx deploy type AND the reverse-proxy reload)
 - Reverse proxy (opt-in edge, see ProxyManager): PROXY_ENABLED, PROXY_CONF_FILE, PROXY_BASE_DOMAIN, PROXY_SSL_ENABLED + PROXY_SSL_CERT/KEY paths (v1 does NOT issue certs — only emits the server-block shape; run certbot yourself then fill paths)
 
@@ -235,7 +237,7 @@ Services throw descriptive errors; routes catch and map to appropriate HTTP stat
 **Injecting environment variables**: `DeployManager.deployApp` calls `NpmLifecycle.resolveEnv(appId, port)` and passes `{ env }` to `ProcessManager.startProcess(app, { env })`, which writes it into the PM2 ecosystem config. User env vars live in the `app_env` table, edited via `GET/PUT /api/apps/:id/env` (UI: `EnvModal`). Env is baked at launch — changes require a restart.
 
 **Adding new API endpoint**:
-1. Add route in `server/src/routes/index.js`
+1. Add the route in the matching sub-router under `server/src/routes/` (`system.js` public health/config, `auth.js` login/me/logout, `apps.js` all `/apps*`, `proxy.js` proxy-routes/domains). `index.js` only composes them — mount order is load-bearing: public routers → `requireAuth` → `apiLimiter` → protected routers.
 2. Use async/await for all database operations
 3. Map service errors to HTTP status codes
 
