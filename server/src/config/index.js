@@ -93,20 +93,10 @@ const config = {
   }
 };
 
-// Validate configuration
-const validateConfig = () => {
-  const { portRangeMin, portRangeMax } = config.deployment;
-
-  if (portRangeMin >= portRangeMax) {
-    throw new Error('APP_PORT_MIN must be less than APP_PORT_MAX');
-  }
-
-  if (config.server.port < 1 || config.server.port > 65535) {
-    throw new Error('Invalid PORT: must be between 1 and 65535');
-  }
-};
-
-// Run validation
-validateConfig();
+// Validate configuration (rules live in ./validate.js as a pure function so
+// they are unit-testable). Throws immediately on invalid config — a bad
+// environment must crash the boot, not fail later at request time.
+const { validateConfig } = require('./validate');
+validateConfig(config);
 
 module.exports = config;
