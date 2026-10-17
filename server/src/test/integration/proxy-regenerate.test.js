@@ -61,7 +61,7 @@ test('regenerate writes conf and runs nginx -t then -s reload', async () => {
   await init();
   const a = await queries.createApp({ name: 'proxyren-' + Math.floor(Math.random() * 1e9), path: '/tmp/p', deploy_type: 'http-server', port: 3333, status: 'running' });
   const calls = [];
-  const execFn = async (cmd) => { calls.push(cmd); return { stdout: '', stderr: '' }; };
+  const execFn = async (file, args) => { calls.push([file, ...args].join(' ')); return { stdout: '', stderr: '' }; };
   try {
     const r = await ProxyManager.regenerate({ execFn });
     assert.equal(r.ok, true);
@@ -84,7 +84,8 @@ test('regenerate does NOT reload when nginx -t fails', async () => {
   config.deployment.proxyConfFile = confFile;
   config.deployment.proxySslEnabled = false;
   await init();
-  const execFn = async (cmd) => {
+  const execFn = async (file, args) => {
+    const cmd = [file, ...args].join(' ');
     if (cmd.includes(' -t')) {
       throw Object.assign(new Error('syntax error'), { stderr: 'nginx: syntax error' });
     }
@@ -112,7 +113,8 @@ test('regenerate restores the prior conf when nginx -t fails', async () => {
   const priorGood = '# prior good conf\nserver_name legacy.example.com;\n';
   fs.writeFileSync(confFile, priorGood, 'utf-8');
   const a = await queries.createApp({ name: 'proxyfix-prior-' + Math.floor(Math.random() * 1e9), path: '/tmp/p', deploy_type: 'http-server', port: 4444, status: 'running' });
-  const execFn = async (cmd) => {
+  const execFn = async (file, args) => {
+    const cmd = [file, ...args].join(' ');
     if (cmd.includes(' -t')) {
       throw Object.assign(new Error('syntax error'), { stderr: 'nginx: syntax error' });
     }
@@ -140,7 +142,8 @@ test('regenerate keeps the rendered conf when reload fails (-t passed)', async (
   config.deployment.proxySslEnabled = false;
   await init();
   const a = await queries.createApp({ name: 'proxyfix-reload-' + Math.floor(Math.random() * 1e9), path: '/tmp/p', deploy_type: 'http-server', port: 5555, status: 'running' });
-  const execFn = async (cmd) => {
+  const execFn = async (file, args) => {
+    const cmd = [file, ...args].join(' ');
     if (cmd.includes(' -t')) return { stdout: '', stderr: '' };
     // -s reload fails
     throw Object.assign(new Error('reload failed'), { stderr: 'nginx: reload failed' });

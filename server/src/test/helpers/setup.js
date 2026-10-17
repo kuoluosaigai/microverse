@@ -19,6 +19,19 @@ const { createApp } = require('../../app');
 const { dbReady, queries } = require('../../db');
 const AuthManager = require('../../services/auth-manager');
 
+// 2b. Hard-suppress real PM2 CLI calls for every test that loads this helper.
+// pm2 is a server dependency, so ProcessManager.pm2Exec resolves its JS entry
+// even without a global install — an unguarded `pm2 jlist`/`pm2 delete` in a
+// test would spawn a real PM2 daemon on the dev/CI machine. Plain property
+// patch (not mock.method) so per-test mocks can still override it, and their
+// mock.reset() restores THIS stub rather than the real implementation.
+const ProcessManager = require('../../services/process-manager');
+ProcessManager.pm2Exec = async () => {
+  const err = new Error('pm2 CLI disabled in tests');
+  err.code = 'ENOENT';
+  throw err;
+};
+
 let _app = null;
 function app() {
   if (!_app) _app = createApp();

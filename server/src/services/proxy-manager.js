@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const util = require('util');
 
-const execPromise = util.promisify(exec);
+// execFile + argument arrays: nginx binary + fixed flags, never a shell string.
+const execFilePromise = util.promisify(execFile);
 
 const config = require('../config');
 const { queries } = require('../db');
@@ -190,11 +191,11 @@ function binError(bin, err, lead) {
  * Never throws: every failure is caught and returned as { ok:false } + warning,
  * so app start/stop/delete are never blocked by a proxy problem.
  *
- * @param {{ execFn?: (cmd:string, opts:object) => Promise<{stdout:string,stderr:string}> }} scope
+ * @param {{ execFn?: (file:string, args:string[], opts:object) => Promise<{stdout:string,stderr:string}> }} scope
  * @returns {Promise<{ok:boolean, skipped?:boolean, reason?:string, message?:string}>}
  */
 async function regenerate(scope = {}) {
-  const execFn = scope.execFn || ((cmd, opts) => execPromise(cmd, opts));
+  const execFn = scope.execFn || ((file, args, opts) => execFilePromise(file, args, opts));
 
   if (!config.deployment.proxyEnabled) {
     return { ok: true, skipped: true, reason: 'disabled' };
@@ -248,7 +249,7 @@ async function regenerate(scope = {}) {
   // `nginx -t` validates the ENTIRE main config (incl. our include), not just
   // our file — so a bad vhost anywhere still blocks reload. Never reload on fail.
   try {
-    await execFn(`"${bin}" -t`, EXEC_OPTS);
+    await execFn(bin, ['-t'], EXEC_OPTS);
   } catch (err) {
     // Roll back the on-disk conf so a broken render can't survive a future
     // nginx restart. Best-effort: this must never throw out of the catch.
@@ -263,7 +264,7 @@ async function regenerate(scope = {}) {
   }
 
   try {
-    await execFn(`"${bin}" -s reload`, EXEC_OPTS);
+    await execFn(bin, ['-s', 'reload'], EXEC_OPTS);
   } catch (err) {
     const msg = binError(bin, err, 'nginx reload failed');
     console.warn(`⚠ [proxy] ${msg}`);

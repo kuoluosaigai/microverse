@@ -1,10 +1,7 @@
-const { exec } = require('child_process');
-const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-
-const execPromise = util.promisify(exec);
+const ProcessManager = require('./process-manager');
 
 /**
  * Log Manager Service
@@ -35,7 +32,7 @@ class LogManager {
 
     const appName = app.name;
     try {
-      const { stdout } = await execPromise('pm2 jlist');
+      const { stdout } = await ProcessManager.pm2Exec(['jlist']);
       const processes = JSON.parse(stdout);
       const proc = processes.find((p) => p.name === appName);
       if (proc && proc.pm2_env) {

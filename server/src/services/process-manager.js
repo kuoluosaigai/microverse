@@ -1,4 +1,4 @@
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -6,6 +6,7 @@ const os = require('os');
 const NginxLifecycle = require('./nginx-lifecycle');
 
 const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 
 /**
  * Process Manager Service
@@ -106,6 +107,56 @@ class ProcessManager {
   }
 
   /**
+   * pm2's JS entry (bin/pm2), resolved once per process. pm2 is a direct
+   * server dependency, so this resolves even without a global install.
+   * @returns {string|null}
+   */
+  static resolvePm2Entry() {
+    if (this._pm2Entry === undefined) {
+      this._pm2Entry = this.resolveCliModule('pm2/bin/pm2');
+    }
+    return this._pm2Entry;
+  }
+
+  /**
+   * Single choke point for every PM2 CLI invocation. Argument arrays mean no
+   * shell interpolation of app names/paths anywhere (execFile), with two
+   * platform concessions:
+   *  - POSIX: plain `pm2` from PATH first (preserves the "global pm2 owns the
+   *    daemon" semantics); falls back to the resolved JS entry when the global
+   *    CLI is missing.
+   *  - Windows: a bare `pm2` is a .cmd shim that Node refuses to execFile
+   *    without a shell, so run the resolved JS entry with the current node;
+   *    only if that fails to resolve do we fall back to a shell string (args
+   *    are platform-controlled there: validated app names + internal paths).
+   * @param {string[]} args pm2 subcommand + arguments
+   * @param {object} [options] execFile options (timeout, maxBuffer, ...)
+   */
+  static async pm2Exec(args, options = {}) {
+    const opts = { maxBuffer: 10 * 1024 * 1024, ...options };
+
+    if (process.platform === 'win32') {
+      const entry = this.resolvePm2Entry();
+      if (entry) {
+        return execFilePromise(process.execPath, [entry, ...args], opts);
+      }
+      return execPromise(`pm2 ${args.map(a => `"${a}"`).join(' ')}`, opts);
+    }
+
+    try {
+      return await execFilePromise('pm2', args, opts);
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        const entry = this.resolvePm2Entry();
+        if (entry) {
+          return execFilePromise(process.execPath, [entry, ...args], opts);
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Write a temporary PM2 ecosystem config and schedule its deletion.
    * Shared by all deploy types to avoid duplicated write+cleanup code.
    * Returns the config file path (caller runs `pm2 start <path>`).
@@ -163,7 +214,7 @@ class ProcessManager {
           }
 
           const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
-          await execPromise(`pm2 start "${configPath}"`);
+          await this.pm2Exec(['start', configPath]);
 
           return { success: true, message: `Process ${name} started` };
         } catch (error) {
@@ -194,7 +245,7 @@ class ProcessManager {
           };
 
           const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
-          await execPromise(`pm2 start "${configPath}"`);
+          await this.pm2Exec(['start', configPath]);
 
           return { success: true, message: `Process ${name} started` };
         } catch (error) {
@@ -224,7 +275,7 @@ class ProcessManager {
           min_uptime: 1000
         };
         const configPath = this.writeEcosystemConfig(appPath, name, appsEntry);
-        await execPromise(`pm2 start "${configPath}"`);
+        await this.pm2Exec(['start', configPath]);
         return { success: true, message: `Process ${name} started` };
       }
 
@@ -238,7 +289,7 @@ class ProcessManager {
    */
   static async stopProcess(appName) {
     try {
-      await execPromise(`pm2 stop "${appName}"`);
+      await this.pm2Exec(['stop', appName]);
       return { success: true, message: `Process ${appName} stopped` };
     } catch (error) {
       throw new Error(`Failed to stop process: ${error.message}`);
@@ -250,7 +301,7 @@ class ProcessManager {
    */
   static async restartProcess(appName) {
     try {
-      await execPromise(`pm2 restart "${appName}"`);
+      await this.pm2Exec(['restart', appName]);
       return { success: true, message: `Process ${appName} restarted` };
     } catch (error) {
       throw new Error(`Failed to restart process: ${error.message}`);
@@ -262,7 +313,7 @@ class ProcessManager {
    */
   static async deleteProcess(appName) {
     try {
-      await execPromise(`pm2 delete "${appName}"`);
+      await this.pm2Exec(['delete', appName]);
       return { success: true, message: `Process ${appName} deleted` };
     } catch (error) {
       // Ignore error if process doesn't exist
@@ -280,7 +331,7 @@ class ProcessManager {
    */
   static async getAllProcessStatus() {
     try {
-      const { stdout } = await execPromise('pm2 jlist');
+      const { stdout } = await this.pm2Exec(['jlist']);
       const processes = JSON.parse(stdout);
       return processes.map(p => ({
         name: p.name,

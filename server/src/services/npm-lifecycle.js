@@ -1,12 +1,14 @@
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { queries } = require('../db');
 const config = require('../config');
+const ProcessManager = require('./process-manager');
 
 const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 
 /**
  * NpmLifecycle — npm app install / build / env resolution.
@@ -116,8 +118,23 @@ class NpmLifecycle {
   }
 
   /**
+   * Run the npm CLI with an argument array (no shell interpolation).
+   * Prefers npm's JS entry (npm-cli.js beside the running node binary) so it
+   * behaves identically on Windows, where a bare `npm` is a .cmd shim Node
+   * refuses to execFile without a shell. Falls back to a shell string only
+   * when the entry is unresolvable — the command is then a fixed platform
+   * string (no user input), the shell merely supplies PATH resolution.
+   */
+  static async npmExec(args, options = {}) {
+    const npmCli = ProcessManager.getNpmCliPath();
+    if (npmCli !== 'npm') {
+      return execFilePromise(process.execPath, [npmCli, ...args], options);
+    }
+    return execPromise(`npm ${args.map(a => `"${a}"`).join(' ')}`, options);
+  }
+
+  /**
    * Run `npm install` in the app directory.
-   * exec runs through the shell, so the npm .cmd wrapper works on Windows.
    */
   static async install(appPath) {
     try {
@@ -126,7 +143,7 @@ class NpmLifecycle {
       // vite, tsc, ...) live in devDependencies and are required for `npm run
       // build`, so install MUST include them. --no-audit/--no-fund skip
       // non-essential network calls during deploy.
-      await execPromise('npm install --include=dev --no-audit --no-fund', {
+      await this.npmExec(['install', '--include=dev', '--no-audit', '--no-fund'], {
         cwd: appPath,
         timeout: config.deployment.npmInstallTimeoutMs,
         maxBuffer: 4 * 1024 * 1024,
@@ -148,7 +165,7 @@ class NpmLifecycle {
       return;
     }
     try {
-      await execPromise('npm run build', {
+      await this.npmExec(['run', 'build'], {
         cwd: appPath,
         timeout: config.deployment.npmBuildTimeoutMs,
         maxBuffer: 4 * 1024 * 1024,

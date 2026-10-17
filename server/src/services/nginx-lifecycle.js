@@ -1,10 +1,12 @@
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 
-const execPromise = util.promisify(exec);
+// execFile (not exec): nginx is a native binary and every argument is
+// platform-generated — no shell needed, no quoting/injection surface.
+const execFilePromise = util.promisify(execFile);
 
 /**
  * NginxLifecycle — config generation, binary resolution, and pre-flight checks
@@ -78,7 +80,7 @@ http {
   static async testConfig(confPath) {
     const bin = this.resolveBinary();
     try {
-      await execPromise(`"${bin}" -t -c "${confPath}"`, {
+      await execFilePromise(bin, ['-t', '-c', confPath], {
         timeout: 15000,
         maxBuffer: 1024 * 1024,
       });
@@ -101,7 +103,7 @@ http {
   static async probe() {
     const bin = this.resolveBinary();
     try {
-      await execPromise(`"${bin}" -v`, { timeout: 10000 });
+      await execFilePromise(bin, ['-v'], { timeout: 10000 });
       return { ok: true };
     } catch (err) {
       if (err.code === 'ENOENT' || /command not found|not recognized|127/.test(err.message || '')) {
