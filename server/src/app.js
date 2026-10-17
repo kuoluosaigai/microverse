@@ -20,6 +20,12 @@ require('./db');
 // in a process shares one connection. Under PM2 cluster each worker opens its
 // own connection to this same file -> sessions are visible across workers and
 // survive restarts (MemoryStore is per-process and caused intermittent 401s).
+// Session-table growth is bounded (verified against connect-sqlite3@0.9.17):
+// rows are keyed by sid with INSERT OR REPLACE (a renewed session updates its
+// row instead of adding one), `rolling` renewals flow through touch() into the
+// `expired` column, and the store runs dbCleanup (DELETE WHERE now > expired)
+// at connect time and every 24h on an unref'd interval. Idle sessions die at
+// cookie.maxAge (7 days); no extra sweeping is needed.
 fs.mkdirSync(path.dirname(config.session.dbPath), { recursive: true });
 const sessionStore = new SQLiteStore({ db: new sqlite3.Database(config.session.dbPath) });
 
