@@ -19,10 +19,39 @@ const exclusive = createExclusive();
 
 class DeployManager {
   /**
+   * Reconcile the app's DB status with PM2 truth, then return the (updated) row.
+   * Makes stop/restart/delete/start operate on what is ACTUALLY running, not on
+   * a stale DB flag (crashed or externally-deleted processes used to wedge these
+   * ops behind a manual /sync). When PM2 is unreachable (jlist fails) we trust
+   * the DB: on a PM2-less machine absence of the CLI must not make every app
+   * look stopped — that would silently bypass the running-app guards.
+   * @returns {Promise<object>} app row with the reconciled status
+   */
+  static async reconcileStatus(appId) {
+    const app = await AppManager.getAppById(appId);
+
+    let processInfo;
+    try {
+      processInfo = await ProcessManager.getProcessStatus(app.name);
+    } catch (_err) {
+      return app; // PM2 unavailable — DB status stands
+    }
+
+    const actual = processInfo.exists && processInfo.status === 'online' ? 'running' : 'stopped';
+    if (app.status !== actual) {
+      await queries.updateAppStatus(actual, appId);
+      app.status = actual;
+    }
+    return app;
+  }
+
+  /**
    * Deploy an application (start it)
    */
   static async deployApp(appId) {
-    const app = await AppManager.getAppById(appId);
+    // Reconcile first: a crashed/removed PM2 process must not block a re-start
+    // with "already running", and a live one must not be launched twice.
+    const app = await this.reconcileStatus(appId);
 
     // Validate app can be deployed
     const validation = await AppManager.validateAppDeployment(appId);
@@ -59,8 +88,23 @@ class DeployManager {
     // For nginx: generate the per-app config and pre-flight it (binary present +
     // config valid) before launch, so failures surface as clean 400s.
     if (app.deploy_type === 'npm') {
-      await NpmLifecycle.install(app.path);
-      await NpmLifecycle.build(app.path);
+      // install/build run only when their fingerprint changed (or the step never
+      // completed), so a plain stop→start doesn't reinstall + rebuild. Fingerprints
+      // live in app_deploy_state (DB) — zip-replacement cleanup can't erase them.
+      // Post-run fingerprints are stored from the AFTER state because npm may
+      // rewrite the lockfile itself.
+      const state = await queries.getAppDeployState(appId);
+      const mustInstall = NpmLifecycle.needsInstall(app.path, state && state.install_fp);
+      if (mustInstall) {
+        await NpmLifecycle.install(app.path);
+        await queries.setUpDeployState(appId, { installFp: NpmLifecycle.installFingerprint(app.path) });
+      }
+      // Dependency changes (install ran) force a rebuild even if app sources
+      // are untouched; otherwise rebuild only when the source tree fingerprint moved.
+      if (mustInstall || NpmLifecycle.needsBuild(app.path, state && state.build_fp)) {
+        await NpmLifecycle.build(app.path); // no-op when there is no build script
+        await queries.setUpDeployState(appId, { buildFp: NpmLifecycle.buildFingerprint(app.path) });
+      }
       const env = await NpmLifecycle.resolveEnv(appId, app.port);
       await ProcessManager.startProcess(app, { env });
     } else if (app.deploy_type === 'nginx') {
@@ -85,14 +129,15 @@ class DeployManager {
   }
 
   /**
-   * Stop a deployed application
+   * Stop a deployed application. Idempotent: when PM2 reports nothing online
+   * the status is merely reconciled and the call succeeds (a crashed or
+   * externally-deleted process must not wedge the app in "running").
    */
   static async stopApp(appId) {
-    const app = await AppManager.getAppById(appId);
+    const app = await this.reconcileStatus(appId);
 
-    // Check if running
     if (app.status !== 'running') {
-      throw new Error('App is not running');
+      return app; // already stopped in reality — nothing to do
     }
 
     // Stop the process
@@ -107,12 +152,11 @@ class DeployManager {
   }
 
   /**
-   * Restart a deployed application
+   * Restart a deployed application (must actually be running in PM2)
    */
   static async restartApp(appId) {
-    const app = await AppManager.getAppById(appId);
+    const app = await this.reconcileStatus(appId);
 
-    // Check if running
     if (app.status !== 'running') {
       throw new Error('App is not running');
     }
@@ -121,6 +165,16 @@ class DeployManager {
     await ProcessManager.restartProcess(app.name);
 
     return AppManager.getAppById(appId);
+  }
+
+  /**
+   * Delete an application. Reconciles with PM2 first so a dead-but-DB-"running"
+   * app can be cleaned up in one call instead of erroring with "stop it first";
+   * the AppManager guard still protects genuinely running apps.
+   */
+  static async deleteApp(appId) {
+    await this.reconcileStatus(appId);
+    return AppManager.deleteApp(appId);
   }
 
   /**

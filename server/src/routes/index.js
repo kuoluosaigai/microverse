@@ -214,10 +214,11 @@ router.post('/apps', async (req, res, next) => {
   }
 });
 
-// Delete application
+// Delete application (goes through DeployManager so the running-guard is
+// checked against PM2 truth, not a stale DB flag)
 router.delete('/apps/:id', async (req, res, next) => {
   try {
-    await AppManager.deleteApp(req.params.id);
+    await DeployManager.deleteApp(req.params.id);
 
     res.json({
       success: true,

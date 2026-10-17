@@ -75,3 +75,15 @@ CREATE TABLE IF NOT EXISTS proxy_domains (
 );
 
 CREATE INDEX IF NOT EXISTS idx_proxy_domains_host ON proxy_domains(host);
+
+-- npm deploy fingerprint state: lets Start skip `npm install` / `npm run build`
+-- when package.json/lockfile (install) and the app tree (build) are unchanged
+-- since the last successful run. Kept in the DB (not marker files in the app
+-- dir) so zip-replacement cleanup never touches it. Cascades with the app row.
+CREATE TABLE IF NOT EXISTS app_deploy_state (
+  app_id INTEGER PRIMARY KEY,
+  install_fp TEXT,
+  build_fp TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+);

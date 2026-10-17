@@ -176,6 +176,25 @@ const queries = {
     return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
   },
 
+  // npm install/build fingerprint state (see app_deploy_state in schema.sql)
+  getAppDeployState: (appId) => dbGet(
+    'SELECT install_fp, build_fp FROM app_deploy_state WHERE app_id = ?',
+    [appId]
+  ),
+
+  // Upsert either or both fingerprints; passing null/undefined for a column
+  // keeps the stored value (COALESCE), so install-success can persist before
+  // build-success does. NULL build_fp cannot be re-set to null this way — fine,
+  // build_fp only moves forward once a build runs.
+  setUpDeployState: async (appId, { installFp, buildFp }) => dbRun(
+    `INSERT INTO app_deploy_state (app_id, install_fp, build_fp) VALUES (?, ?, ?)
+     ON CONFLICT(app_id) DO UPDATE SET
+       install_fp = COALESCE(excluded.install_fp, app_deploy_state.install_fp),
+       build_fp   = COALESCE(excluded.build_fp, app_deploy_state.build_fp),
+       updated_at = CURRENT_TIMESTAMP`,
+    [appId, installFp ?? null, buildFp ?? null]
+  ),
+
   // Proxy route queries (custom domain -> port/app mappings)
   listProxyRoutes: () => dbAll('SELECT * FROM proxy_routes ORDER BY id'),
 

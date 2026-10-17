@@ -2,6 +2,7 @@ const { exec } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { queries } = require('../db');
 const config = require('../config');
 
@@ -26,6 +27,92 @@ class NpmLifecycle {
     } catch (err) {
       throw new Error('Invalid package.json: ' + err.message);
     }
+  }
+
+  /**
+   * Install fingerprint: sha256 over package.json (+ lockfile when present)
+   * contents. Changes iff the dependency set definition changed.
+   * @returns {string|null} null when package.json is unreadable
+   */
+  static installFingerprint(appPath) {
+    try {
+      const hash = crypto.createHash('sha256');
+      hash.update(fs.readFileSync(path.join(appPath, 'package.json')));
+      for (const lock of ['package-lock.json', 'npm-shrinkwrap.json']) {
+        const lockPath = path.join(appPath, lock);
+        if (fs.existsSync(lockPath)) {
+          hash.update('\0' + lock + '\0');
+          hash.update(fs.readFileSync(lockPath));
+        }
+      }
+      return hash.digest('hex');
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  /**
+   * Build fingerprint: sha256 over the app tree (relPath:size:mtimeMs per file,
+   * sorted) WITHOUT reading file contents — cheap even for 100MB uploads.
+   * Skips node_modules (npm's own state) and platform-managed files (per-app
+   * PM2 ecosystem config, nginx artifacts). Any user-visible source change —
+   * new upload, zip re-extract, env file edit — flips it; byte-identical
+   * re-uploads with unchanged mtimes correctly do not.
+   * @returns {string|null} null when the directory is unreadable
+   */
+  static buildFingerprint(appPath) {
+    const skip = new Set(['node_modules']);
+    const skipName = (name) =>
+      skip.has(name) || /^pm2\..*\.config\.cjs$/.test(name) || /^nginx[.]/.test(name);
+    const lines = [];
+    const walk = (dir, rel) => {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch (_err) {
+        return false;
+      }
+      for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        if (skipName(e.name)) continue;
+        const abs = path.join(dir, e.name);
+        const relPath = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) {
+          lines.push(`d:${relPath}`);
+          if (!walk(abs, relPath)) return false;
+        } else if (e.isFile()) {
+          try {
+            const st = fs.statSync(abs);
+            lines.push(`f:${relPath}:${st.size}:${Math.round(st.mtimeMs)}`);
+          } catch (_err) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    if (!walk(appPath, '')) return null;
+    return crypto.createHash('sha256').update(lines.join('\n')).digest('hex');
+  }
+
+  /**
+   * Does this app need `npm install`? Always when node_modules is missing or
+   * the install fingerprint changed since the stored one (null = never run).
+   */
+  static needsInstall(appPath, savedFp) {
+    if (!fs.existsSync(path.join(appPath, 'node_modules'))) return true;
+    if (!savedFp) return true;
+    const current = this.installFingerprint(appPath);
+    return current !== savedFp;
+  }
+
+  /**
+   * Does this app need `npm run build`? When the tree fingerprint changed
+   * since the stored one (null = never run).
+   */
+  static needsBuild(appPath, savedFp) {
+    if (!savedFp) return true;
+    const current = this.buildFingerprint(appPath);
+    return current !== savedFp;
   }
 
   /**

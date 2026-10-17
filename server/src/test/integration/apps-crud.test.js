@@ -1,9 +1,23 @@
 const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('path');
 const { adminAgent, queries, dbReady } = require('../helpers/setup');
 
 let agent;
-before(async () => { await dbReady; agent = await adminAgent(); });
+before(async () => {
+  // Deterministic "PM2 CLI absent" environment. Under `npm test`, npm prepends
+  // node_modules/.bin to PATH — and pm2 is a server dependency, so `pm2 jlist`
+  // would resolve and answer [] (no daemon). DeployManager.reconcileStatus then
+  // (correctly) treats a hand-set DB 'running' flag as drift and allows delete.
+  // Strip .bin dirs so the CLI is genuinely unreachable here and the guard
+  // deterministically falls back to DB truth. The drift branch (PM2 reachable,
+  // process gone -> delete allowed) is covered in unit/deploy-status-reconcile.
+  process.env.PATH = process.env.PATH.split(path.delimiter)
+    .filter((p) => !/(^|[\\/])\.bin([\\/]|$)/i.test(p))
+    .join(path.delimiter);
+  await dbReady;
+  agent = await adminAgent();
+});
 
 test('POST /api/apps creates an app', async () => {
   const res = await agent.post('/api/apps').send({ name: 'crud-app', deploy_type: 'http-server' });
