@@ -26,7 +26,13 @@ const server = app.listen(config.server.port, config.server.host, () => {
     if (!ok) console.warn('⚠ ' + message);
   });
 
-  metricsSampler.start();
+  // Single-writer metrics sampling: under PM2 cluster only instance 0 polls
+  // PM2 and writes to the shared SQLite metrics table; every worker serves
+  // reads from that same table (routes -> metricsSampler.getLatest/getHistory).
+  const instanceId = process.env.NODE_APP_INSTANCE;
+  if (instanceId === undefined || instanceId === '0') {
+    metricsSampler.start();
+  }
 
   dbReady.then(async () => {
     await AuthManager.ensureAdmin();

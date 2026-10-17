@@ -26,10 +26,10 @@ const router = express.Router();
 router.get('/apps', async (req, res, next) => {
   try {
     const apps = await AppManager.getAllApps();
-    const withMetrics = apps.map(app => ({
+    const withMetrics = await Promise.all(apps.map(async app => ({
       ...app,
-      metrics: metricsSampler.getLatest(app.name)
-    }));
+      metrics: await metricsSampler.getLatest(app.name)
+    })));
 
     res.json({
       success: true,
@@ -47,7 +47,7 @@ router.get('/apps/:id', async (req, res, next) => {
 
     res.json({
       success: true,
-      data: { ...app, metrics: metricsSampler.getLatest(app.name) }
+      data: { ...app, metrics: await metricsSampler.getLatest(app.name) }
     });
   } catch (error) {
     if (error.message === 'App not found') {
@@ -64,7 +64,7 @@ router.get('/apps/:id', async (req, res, next) => {
 router.get('/apps/:id/metrics', async (req, res, next) => {
   try {
     const app = await AppManager.getAppById(req.params.id);
-    const history = metricsSampler.getHistory(app.name);
+    const history = await metricsSampler.getHistory(app.name);
     res.json({ success: true, data: history });
   } catch (error) {
     if (error.message === 'App not found') {

@@ -87,3 +87,19 @@ CREATE TABLE IF NOT EXISTS app_deploy_state (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
 );
+
+-- Resource-metric samples (CPU/memory). Written by ONE cluster worker's
+-- MetricsSampler every METRICS_INTERVAL_MS and read by every worker — an
+-- in-memory ring buffer was per-process, so under PM2 cluster GET /api/apps
+-- returned whichever worker's view the load balancer hit. Bounded: the
+-- sampler prunes each app to the newest METRICS_MAX_SAMPLES rows per tick.
+CREATE TABLE IF NOT EXISTS metrics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_name TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  cpu REAL NOT NULL,
+  memory INTEGER NOT NULL,
+  uptime_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_app_ts ON metrics(app_name, ts);

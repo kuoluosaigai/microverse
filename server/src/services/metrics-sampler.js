@@ -1,27 +1,30 @@
 const config = require('../config');
 const ProcessManager = require('./process-manager');
+const { queries } = require('../db');
 
 /**
  * MetricsSampler — boot-started background sampler. Polls PM2 once per tick for
- * ALL processes and keeps an in-memory ring buffer of recent resource samples
- * per app. Decouples PM2 from the request path: GET /api/apps reads the buffer,
- * not PM2. Exported as a singleton instance.
+ * ALL processes and appends resource samples to the shared SQLite `metrics`
+ * table, pruned to the newest METRICS_MAX_SAMPLES rows per app (ring-buffer
+ * semantics).
+ *
+ * Under PM2 cluster only ONE worker runs the sampler (server.js gates start()
+ * on NODE_APP_INSTANCE), while every worker serves reads from the same table —
+ * the old in-memory buffer made GET /api/apps return whichever worker's view
+ * the load balancer happened to hit.
  *
  * Sample = { ts:number(epoch ms), cpu:number(%), memory:number(bytes), uptimeMs:number }
  */
 class MetricsSampler {
   constructor() {
-    /** @type {Map<string, Array<{ts:number,cpu:number,memory:number,uptimeMs:number}>>} */
-    this.buffers = new Map();
     this.timer = null;
   }
 
   start() {
     if (this.timer) return;
-    const cap = config.deployment.metricsMaxSamples;
     // Tick immediately so data appears without waiting a full interval.
-    this._tick(cap);
-    this.timer = setInterval(() => this._tick(cap), config.deployment.metricsIntervalMs);
+    this._tick();
+    this.timer = setInterval(() => this._tick(), config.deployment.metricsIntervalMs);
     if (this.timer.unref) this.timer.unref(); // don't keep the process alive solely for sampling
   }
 
@@ -32,28 +35,23 @@ class MetricsSampler {
     }
   }
 
-  async _tick(cap) {
+  async _tick() {
+    const cap = config.deployment.metricsMaxSamples;
     try {
       const all = await ProcessManager.getAllProcessStatus();
       const ts = Date.now();
       // Only sample online processes: `pm2 stop` leaves a process in jlist with
       // monit:{cpu:0,memory:0}, so sampling stopped apps would push misleading
-      // zero-samples + a growing uptime. Filtering freezes the buffer at the
-      // last good sample when an app stops.
+      // zero-samples + a growing uptime. Absence of new rows freezes an app's
+      // history at its last good sample.
       for (const p of all.filter(x => x.status === 'online')) {
-        const sample = {
+        await queries.insertMetric(p.name, {
           ts,
           cpu: p.cpu,
           memory: p.memory,
-          uptimeMs: p.uptime ? ts - p.uptime : 0
-        };
-        const buf = this.buffers.get(p.name);
-        if (buf) {
-          buf.push(sample);
-          if (buf.length > cap) buf.shift();
-        } else {
-          this.buffers.set(p.name, [sample]);
-        }
+          uptimeMs: p.uptime ? ts - p.uptime : 0,
+        });
+        await queries.pruneMetrics(p.name, cap);
       }
     } catch (err) {
       // PM2 unavailable or jlist failed — warn and skip; never crash the loop.
@@ -62,16 +60,16 @@ class MetricsSampler {
   }
 
   /** Latest sample for an app, or null (stopped/never seen). */
-  getLatest(name) {
-    const buf = this.buffers.get(name);
-    if (!buf || buf.length === 0) return null;
-    return buf[buf.length - 1];
+  async getLatest(name) {
+    const row = await queries.getLatestMetric(name);
+    if (!row) return null;
+    return { ts: row.ts, cpu: row.cpu, memory: row.memory, uptimeMs: row.uptime_ms };
   }
 
-  /** Copy of the sample history for an app (empty array if none). */
-  getHistory(name) {
-    const buf = this.buffers.get(name);
-    return buf ? buf.slice() : [];
+  /** Sample history for an app, oldest first (empty array if none). */
+  async getHistory(name) {
+    const rows = await queries.getMetricHistory(name);
+    return rows.map(r => ({ ts: r.ts, cpu: r.cpu, memory: r.memory, uptimeMs: r.uptime_ms }));
   }
 }
 

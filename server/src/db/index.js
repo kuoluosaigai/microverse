@@ -195,6 +195,30 @@ const queries = {
     [appId, installFp ?? null, buildFp ?? null]
   ),
 
+  // Metrics queries (shared store for the cluster — see metrics table in schema.sql)
+  insertMetric: (appName, sample) => dbRun(
+    'INSERT INTO metrics (app_name, ts, cpu, memory, uptime_ms) VALUES (?, ?, ?, ?, ?)',
+    [appName, sample.ts, sample.cpu, sample.memory, sample.uptimeMs == null ? null : sample.uptimeMs]
+  ),
+
+  getLatestMetric: (appName) => dbGet(
+    'SELECT ts, cpu, memory, uptime_ms FROM metrics WHERE app_name = ? ORDER BY ts DESC, id DESC LIMIT 1',
+    [appName]
+  ),
+
+  getMetricHistory: (appName) => dbAll(
+    'SELECT ts, cpu, memory, uptime_ms FROM metrics WHERE app_name = ? ORDER BY ts ASC, id ASC',
+    [appName]
+  ),
+
+  // Keep only the newest `keep` samples for an app (ring-buffer semantics).
+  pruneMetrics: (appName, keep) => dbRun(
+    `DELETE FROM metrics WHERE app_name = ? AND id NOT IN (
+       SELECT id FROM metrics WHERE app_name = ? ORDER BY ts DESC, id DESC LIMIT ?
+     )`,
+    [appName, appName, keep]
+  ),
+
   // Proxy route queries (custom domain -> port/app mappings)
   listProxyRoutes: () => dbAll('SELECT * FROM proxy_routes ORDER BY id'),
 
