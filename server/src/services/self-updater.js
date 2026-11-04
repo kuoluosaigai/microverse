@@ -118,9 +118,10 @@ function httpGetStatus(port) {
 }
 
 /**
- * Poll `request(port)` until it yields a 2xx/3xx status or the deadline
- * passes. Transient errors (connection refused while PM2 restarts) are
- * retried. Resolves a boolean; never throws.
+ * Poll `request(port)` until it yields HTTP 200 or the deadline passes. Only
+ * 200 counts as healthy: a redirect (3xx) or any other status means the app is
+ * not serving the expected response yet. Transient errors (connection refused
+ * while PM2 restarts) are retried. Resolves a boolean; never throws.
  */
 async function pollHealth({
   request,
@@ -134,7 +135,7 @@ async function pollHealth({
   for (;;) {
     try {
       const status = await request(port);
-      if (status >= 200 && status < 400) return true;
+      if (status === 200) return true;
     } catch (_err) {
       // Transient: the server is still coming back up.
     }
@@ -602,7 +603,16 @@ class SelfUpdater {
         return await this.rollback(err);
       }
 
-      await this.step('cleanup', () => this.cleanupStep());
+      try {
+        await this.step('cleanup', () => this.cleanupStep());
+      } catch (cleanupErr) {
+        // Cleanup is bookkeeping only: a transient failure must not turn an
+        // otherwise healthy update into `failed`. Record it and finish.
+        const warning = `清理失败（忽略）：${errorMessage(cleanupErr)}`;
+        const prior = this.state.warning;
+        this.save({ warning: prior ? `${prior}; ${warning}` : warning });
+        this.log(warning);
+      }
 
       this.save({ status: 'success', error: null, finishedAt: this.iso(this.now()) });
       this.log('更新完成');

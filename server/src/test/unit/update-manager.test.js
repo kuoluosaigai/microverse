@@ -226,3 +226,129 @@ test('startUpdate fails cleanly when the spawned child has no pid', async () => 
     assert.equal(fs.existsSync(paths.lockPath), false);
   } finally { mock.reset(); }
 });
+
+test('version info disables updates when the checkout is not a git repo', async () => {
+  const orig = config.selfUpdate.enabled;
+  config.selfUpdate.enabled = true;
+  mock.method(UpdateManager, 'getCurrentVersion', async () => null);
+  mock.method(UpdateManager, 'getLatestVersion', async () => ({
+    sha: NEW_SHA, shortSha: NEW_SHA.slice(0, 7), checkedAt: new Date().toISOString()
+  }));
+  mock.method(UpdateManager, 'isPlatformSupported', () => true);
+  mock.method(UpdateManager, 'isPm2Online', async () => true);
+  mock.method(UpdateManager, 'getIncompleteUpdate', () => null);
+  try {
+    const info = await UpdateManager.getVersionInfo();
+    assert.equal(info.current, null);
+    assert.equal(info.updateEnabled, false);
+    assert.equal(info.incomplete, null);
+  } finally { mock.reset(); config.selfUpdate.enabled = orig; }
+});
+
+test('getIncompleteUpdate returns null when there is no state', () => {
+  assert.equal(UpdateManager.getIncompleteUpdate({ paths: tmpPaths() }), null);
+});
+
+test('getIncompleteUpdate returns null for a terminal state', () => {
+  const paths = tmpPaths();
+  UpdateManager.writeState(paths.statePath, {
+    status: 'success', step: 'cleanup', pid: 999999,
+    startedAt: '2026-11-05T00:00:00.000Z', fromSha: SHA, toSha: NEW_SHA
+  });
+  assert.equal(UpdateManager.getIncompleteUpdate({ paths }), null);
+});
+
+test('getIncompleteUpdate returns null when the running pid is alive', () => {
+  const paths = tmpPaths();
+  UpdateManager.writeState(paths.statePath, {
+    status: 'running', step: 'build', pid: process.pid,
+    startedAt: '2026-11-05T00:00:00.000Z', fromSha: SHA, toSha: NEW_SHA
+  });
+  assert.equal(UpdateManager.getIncompleteUpdate({ paths }), null);
+});
+
+test('getIncompleteUpdate reports the step of a dead-pid running state', () => {
+  const paths = tmpPaths();
+  UpdateManager.writeState(paths.statePath, {
+    status: 'running', step: 'build', pid: 999999,
+    startedAt: '2026-11-05T00:00:00.000Z', fromSha: SHA, toSha: NEW_SHA
+  });
+  mock.method(UpdateManager, 'isPidAlive', () => false);
+  try {
+    assert.deepEqual(UpdateManager.getIncompleteUpdate({ paths }), {
+      step: 'build',
+      startedAt: '2026-11-05T00:00:00.000Z',
+      fromSha: SHA,
+      toSha: NEW_SHA
+    });
+  } finally { mock.reset(); }
+});
+
+test('isUpdateRunning detects a live running state without a lock file', () => {
+  const paths = tmpPaths();
+  UpdateManager.writeState(paths.statePath, {
+    status: 'running', step: 'install', pid: 4242,
+    startedAt: new Date().toISOString(), fromSha: SHA, toSha: NEW_SHA
+  });
+  mock.method(UpdateManager, 'getPaths', () => paths);
+  mock.method(UpdateManager, 'isPidAlive', () => true);
+  try {
+    assert.equal(fs.existsSync(paths.lockPath), false);
+    assert.equal(UpdateManager.isUpdateRunning(), true);
+  } finally { mock.reset(); }
+});
+
+test('preflight allows a repair run when an interrupted update left the same sha', async () => {
+  stubGit();
+  const orig = config.selfUpdate.enabled;
+  config.selfUpdate.enabled = true;
+  mock.method(UpdateManager, 'isPlatformSupported', () => true);
+  mock.method(UpdateManager, 'isPm2Online', async () => true);
+  mock.method(UpdateManager, 'isUpdateRunning', () => false);
+  mock.method(UpdateManager, 'getLatestVersion', async () => ({
+    sha: SHA, shortSha: SHA.slice(0, 7), checkedAt: new Date().toISOString()
+  }));
+  mock.method(UpdateManager, 'getIncompleteUpdate', () => ({
+    step: 'build', startedAt: '2026-11-05T00:00:00.000Z', fromSha: SHA, toSha: SHA
+  }));
+  try {
+    const r = await UpdateManager.preflight();
+    assert.deepEqual(r, { ok: true, fromSha: SHA, toSha: SHA });
+  } finally { mock.reset(); config.selfUpdate.enabled = orig; }
+});
+
+test('preflight rejects an up-to-date checkout that was not interrupted', async () => {
+  stubGit();
+  const orig = config.selfUpdate.enabled;
+  config.selfUpdate.enabled = true;
+  mock.method(UpdateManager, 'isPlatformSupported', () => true);
+  mock.method(UpdateManager, 'isPm2Online', async () => true);
+  mock.method(UpdateManager, 'isUpdateRunning', () => false);
+  mock.method(UpdateManager, 'getLatestVersion', async () => ({
+    sha: SHA, shortSha: SHA.slice(0, 7), checkedAt: new Date().toISOString()
+  }));
+  mock.method(UpdateManager, 'getIncompleteUpdate', () => null);
+  try {
+    const r = await UpdateManager.preflight();
+    assert.deepEqual(r, { ok: false, httpStatus: 400, message: '已经是最新版本' });
+  } finally { mock.reset(); config.selfUpdate.enabled = orig; }
+});
+
+test('claimLock refuses a fresh unparsable lock', () => {
+  const paths = tmpPaths();
+  fs.writeFileSync(paths.lockPath, '');
+  const r = UpdateManager.claimLock(paths, new Date().toISOString());
+  assert.deepEqual(r, { ok: false, httpStatus: 409, message: '已有更新正在进行' });
+  assert.equal(fs.readFileSync(paths.lockPath, 'utf8'), '');
+});
+
+test('claimLock preempts an unparsable lock older than two hours', () => {
+  const paths = tmpPaths();
+  fs.writeFileSync(paths.lockPath, '');
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(paths.lockPath, old, old);
+  const r = UpdateManager.claimLock(paths, new Date().toISOString());
+  assert.deepEqual(r, { ok: true });
+  const lock = JSON.parse(fs.readFileSync(paths.lockPath, 'utf8'));
+  assert.equal(lock.pid, process.pid);
+});

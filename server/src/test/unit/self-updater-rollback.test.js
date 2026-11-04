@@ -208,6 +208,25 @@ test('inherits a lock claimed by the spawning parent', async () => {
   assert.equal(state.status, 'success');
 });
 
+test('a cleanup failure warns but still finishes success', async () => {
+  const { repoRoot } = fixture();
+  const calls = [];
+  const base = deps(repoRoot, calls);
+  let statusCalls = 0;
+  const state = await runUpdate({
+    ...base,
+    runCommand: async (file, args, options) => {
+      if (args.join(' ') === 'status --porcelain --untracked-files=no') {
+        statusCalls += 1;
+        if (statusCalls === 2) throw new Error('cleanup boom');
+      }
+      return base.runCommand(file, args, options);
+    }
+  });
+  assert.equal(state.status, 'success');
+  assert.match(state.warning, /清理失败（忽略）：cleanup boom/);
+});
+
 test('pollHealth gives up at the deadline', async () => {
   let t = 0;
   const { pollHealth } = require('../../services/self-updater');

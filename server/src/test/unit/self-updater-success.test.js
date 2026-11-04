@@ -86,6 +86,19 @@ test('stale dist.next/dist.prev are cleaned before building', async () => {
   assert.equal(fs.existsSync(path.join(repoRoot, 'client', 'dist.prev')), false);
 });
 
+test('pollHealth only accepts HTTP 200, not a redirect', async () => {
+  let t = 0;
+  const ok = await pollHealth({
+    port: 5000,
+    timeoutMs: 3000,
+    intervalMs: 1000,
+    now: () => t,
+    sleep: async () => { t += 1000; },
+    request: async () => 302
+  });
+  assert.equal(ok, false);
+});
+
 test('pollHealth retries transient errors until the deadline', async () => {
   let attempts = 0;
   let t = 0;

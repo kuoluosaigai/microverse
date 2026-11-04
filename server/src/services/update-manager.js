@@ -300,11 +300,49 @@ class UpdateManager {
   }
 
   /**
-   * True when a live update lock is held (the lock exists and is not stale).
+   * Detect an update that was interrupted: a `running` state whose owner pid is
+   * no longer alive. Such a run must be repairable (rerun install/build/reload/
+   * health) because the checkout may already be at the new sha while state was
+   * never finalized. Never throws.
+   *
+   * @returns {{step: string, startedAt: string, fromSha: string, toSha: string}|null}
+   */
+  static getIncompleteUpdate({ paths = this.getPaths() } = {}) {
+    try {
+      const state = this.readState(paths.statePath);
+      if (!state || state.status !== 'running') return null;
+      if (Number.isInteger(state.pid) && state.pid > 0 && this.isPidAlive(state.pid)) {
+        return null;
+      }
+      return {
+        step: state.step || 'queued',
+        startedAt: state.startedAt || null,
+        fromSha: state.fromSha || null,
+        toSha: state.toSha || null
+      };
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  /**
+   * True when an update is in progress: either a live lock is held, or the
+   * state file says `running` and its owner pid is alive (the lock file can
+   * briefly lag behind a freshly spawned helper).
    */
   static isUpdateRunning(now = Date.now()) {
-    const lock = this.readState(this.getPaths().lockPath);
-    return !this.isLockStale(lock, now, this.isPidAlive);
+    const paths = this.getPaths();
+    const lock = this.readState(paths.lockPath);
+    if (!this.isLockStale(lock, now, this.isPidAlive)) return true;
+
+    const state = this.readState(paths.statePath);
+    if (!state || state.status !== 'running') return false;
+    if (!Number.isInteger(state.pid) || state.pid <= 0) return false;
+    try {
+      return Boolean(this.isPidAlive(state.pid));
+    } catch (_err) {
+      return false;
+    }
   }
 
   /**
@@ -316,8 +354,11 @@ class UpdateManager {
       const latest = await this.getLatestVersion();
       const platformSupported = this.isPlatformSupported();
       const pm2Online = await this.isPm2Online();
+      const incomplete = this.getIncompleteUpdate();
+      // A non-git deployment has no `current`, so it cannot self-update even
+      // when the feature is enabled and PM2 is online.
       const updateEnabled = Boolean(
-        config.selfUpdate.enabled && platformSupported && pm2Online);
+        config.selfUpdate.enabled && platformSupported && Boolean(current) && pm2Online);
       const updateAvailable = this.computeUpdateAvailable(current, latest);
 
       let reason = null;
@@ -337,13 +378,14 @@ class UpdateManager {
         reason = 'PM2 进程未在线（检查 PM2_INSTANCE_NAME）';
       }
 
-      return { current, latest, updateAvailable, updateEnabled, reason };
+      return { current, latest, updateAvailable, updateEnabled, incomplete, reason };
     } catch (err) {
       return {
         current: null,
         latest: null,
         updateAvailable: false,
         updateEnabled: false,
+        incomplete: null,
         reason: err.message
       };
     }
@@ -383,11 +425,22 @@ class UpdateManager {
     if (!latest || !latest.sha) {
       return { ok: false, httpStatus: 400, message: '无法获取远端版本' };
     }
-    if (current.sha === latest.sha) {
-      return { ok: false, httpStatus: 400, message: '已经是最新版本' };
-    }
+
+    // Check PM2 before the "already latest" comparison: a repair run still
+    // needs a live PM2 process to reload and health-check.
     if (!(await this.isPm2Online())) {
       return { ok: false, httpStatus: 400, message: 'PM2 进程未在线（检查 PM2_INSTANCE_NAME）' };
+    }
+
+    const incomplete = this.getIncompleteUpdate();
+    if (current.sha === latest.sha) {
+      if (incomplete) {
+        // The previous helper pulled but never finalized (state still
+        // `running`, pid dead). A repair run uses the same sha on both sides;
+        // fetch/merge are no-ops and install/build/reload/health rerun.
+        return { ok: true, fromSha: current.sha, toSha: current.sha };
+      }
+      return { ok: false, httpStatus: 400, message: '已经是最新版本' };
     }
 
     return { ok: true, fromSha: current.sha, toSha: latest.sha };
@@ -395,28 +448,65 @@ class UpdateManager {
 
   /**
    * Claim the update lock for the server process before spawning the runner.
-   * `wx` makes creation exclusive, so concurrent POSTs cannot both win:
+   * The payload is written to a unique temp file and hard-linked into place, so
+   * creation is atomic (`link` fails with EEXIST) and concurrent POSTs cannot
+   * both win:
    *  - EEXIST + live lock -> conflict (no state write, no spawn)
    *  - EEXIST + stale lock -> remove and retry the exclusive write once
+   *  - EEXIST + unparsable lock -> preempt only when older than 2 hours
    *
    * @returns {{ok:true} | {ok:false, httpStatus:number, message:string}}
    */
   static claimLock(paths, startedAt) {
     const payload = JSON.stringify({ pid: process.pid, startedAt });
+    const linkUnsupported = new Set(['EPERM', 'ENOSYS', 'EOPNOTSUPP', 'ENOTSUP']);
+
     const writeExclusive = () => {
+      const tmpPath = `${paths.lockPath}.${process.pid}.${Date.now()}.${
+        Math.random().toString(16).slice(2)}.tmp`;
       try {
-        fs.writeFileSync(paths.lockPath, payload, { flag: 'wx', mode: 0o600 });
+        fs.writeFileSync(tmpPath, payload, { mode: 0o600 });
+      } catch (err) {
+        try { fs.rmSync(tmpPath, { force: true }); } catch (_ignored) {}
+        throw err;
+      }
+
+      try {
+        fs.linkSync(tmpPath, paths.lockPath);
         return true;
       } catch (err) {
         if (err && err.code === 'EEXIST') return false;
+        if (err && linkUnsupported.has(err.code)) {
+          // Filesystem without hard-link support: fall back to `wx`.
+          try {
+            fs.writeFileSync(paths.lockPath, payload, { flag: 'wx', mode: 0o600 });
+            return true;
+          } catch (wxErr) {
+            if (wxErr && wxErr.code === 'EEXIST') return false;
+            throw wxErr;
+          }
+        }
         throw err;
+      } finally {
+        try { fs.rmSync(tmpPath, { force: true }); } catch (_ignored) {}
       }
     };
 
     if (writeExclusive()) return { ok: true };
 
+    const now = Date.now();
     const lock = this.readState(paths.lockPath);
-    if (!this.isLockStale(lock, Date.now(), this.isPidAlive)) {
+    let stale;
+    if (lock === null) {
+      // Unparsable/empty lock: there is no pid to probe, so only preempt it
+      // after a clearly abandoned interval.
+      let mtimeMs = 0;
+      try { mtimeMs = fs.statSync(paths.lockPath).mtimeMs; } catch (_err) { mtimeMs = 0; }
+      stale = now - mtimeMs > 2 * 60 * 60 * 1000;
+    } else {
+      stale = this.isLockStale(lock, now, this.isPidAlive);
+    }
+    if (!stale) {
       return { ok: false, httpStatus: 409, message: '已有更新正在进行' };
     }
     try {
