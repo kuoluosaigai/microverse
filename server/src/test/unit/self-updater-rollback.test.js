@@ -77,6 +77,53 @@ test('health failure restores dist.prev and reloads twice', async () => {
   assert.equal(calls.filter(c => c.includes('pm2 reload')).length, 2);
 });
 
+test('rollback that stays unhealthy ends failed for manual intervention', async () => {
+  const { repoRoot } = fixture();
+  const calls = [];
+  const state = await runUpdate({
+    ...deps(repoRoot, calls),
+    healthCheck: async () => false
+  });
+  assert.equal(state.status, 'failed');
+  assert.match(state.error, /人工介入/);
+  assert.match(state.error, /健康检查失败/);
+});
+
+test('rollback reports failed when the code reset fails', async () => {
+  const { repoRoot } = fixture();
+  const calls = [];
+  const base = deps(repoRoot, calls);
+  let healthCalls = 0;
+  const state = await runUpdate({
+    ...base,
+    runCommand: async (file, args, options) => {
+      if (args[0] === 'reset' && args[1] === '--hard') {
+        calls.push(`git ${args.join(' ')}`);
+        throw new Error('reset failed');
+      }
+      return base.runCommand(file, args, options);
+    },
+    healthCheck: async () => { healthCalls += 1; return healthCalls > 1; }
+  });
+  assert.equal(state.status, 'failed');
+  assert.match(state.error, /代码恢复失败/);
+  assert.doesNotMatch(state.error, /健康检查失败/);
+});
+
+test('rollback reports failed when the dist restore fails', async () => {
+  const { repoRoot } = fixture();
+  const calls = [];
+  let healthCalls = 0;
+  const state = await runUpdate({
+    ...deps(repoRoot, calls),
+    restoreDist: async () => { throw new Error('dist restore failed'); },
+    healthCheck: async () => { healthCalls += 1; return healthCalls > 1; }
+  });
+  assert.equal(state.status, 'failed');
+  assert.match(state.error, /dist 恢复失败/);
+  assert.doesNotMatch(state.error, /健康检查失败/);
+});
+
 test('diverged history fails before any file is touched', async () => {
   const { repoRoot } = fixture();
   const calls = [];

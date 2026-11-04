@@ -177,6 +177,10 @@ class SelfUpdater {
     this.sleep = o.sleep || defaultSleep;
     this.isPidAlive = o.isPidAlive || UpdateManager.isPidAlive;
 
+    // Injectable so tests can exercise a failed dist restore (and so the
+    // restore has a single seam). Defaults to the bound helper below.
+    this.restoreDist = o.restoreDist || this.restoreDist.bind(this);
+
     // Bound health check: succeeds once the reloaded platform reports healthy.
     this.healthCheck = o.healthCheck || (() => pollHealth({
       request: httpGetStatus,
@@ -440,9 +444,11 @@ class SelfUpdater {
    * pre-update sha, restore the staged-build swap, reinstall whatever the old
    * code needs, reload and re-check health.
    *
-   * Every step is best-effort except the final health verdict: a rollback that
-   * itself fails must still produce a final state, flagged for manual
-   * intervention.
+   * Every step is best-effort — a failure in one must not stop the others from
+   * being attempted — but the outcome is tracked: `rolled_back` is only
+   * reported when the code reset, the dist restore and the post-rollback
+   * health check all succeeded. Anything less is `failed` with a message naming
+   * what still needs manual attention.
    *
    * @param {Error} err - the error that triggered the rollback
    * @returns {Promise<object>} final state
@@ -451,17 +457,23 @@ class SelfUpdater {
     const cause = errorMessage(err);
     this.log(`回滚开始：${cause}`);
 
+    let resetOk = false;
     if (this.fromSha) {
       try {
         await this.git(['reset', '--hard', this.fromSha], GIT_ROLLBACK_TIMEOUT_MS);
+        resetOk = true;
         this.log(`代码已回滚到 ${this.fromSha}`);
       } catch (resetErr) {
         this.log(`代码回滚失败：${errorMessage(resetErr)}`);
       }
+    } else {
+      this.log('缺少更新前版本号，无法回滚代码');
     }
 
+    let distOk = false;
     try {
-      this.restoreDist();
+      await this.restoreDist();
+      distOk = true;
       this.log('client/dist 已恢复');
     } catch (distErr) {
       this.log(`client/dist 恢复失败：${errorMessage(distErr)}`);
@@ -482,14 +494,19 @@ class SelfUpdater {
       this.log(`回滚后 reload 失败：${errorMessage(pm2Err)}`);
     }
 
-    let healthy = false;
+    let healthOk = false;
     try {
-      healthy = await this.healthCheck();
+      healthOk = await this.healthCheck();
     } catch (healthErr) {
       this.log(`回滚后健康检查失败：${errorMessage(healthErr)}`);
     }
 
-    if (healthy) {
+    const failures = [];
+    if (!resetOk) failures.push('代码恢复失败');
+    if (!distOk) failures.push('dist 恢复失败');
+    if (!healthOk) failures.push('健康检查失败');
+
+    if (failures.length === 0) {
       this.save({
         status: 'rolled_back',
         error: cause,
@@ -497,12 +514,13 @@ class SelfUpdater {
       });
       this.log(`更新失败，已回滚：${cause}`);
     } else {
+      const message = `回滚未完成：${failures.join('；')}。需要人工介入。`;
       this.save({
         status: 'failed',
-        error: `更新失败，且回滚后健康检查仍未通过，需要人工介入（${cause}）`,
+        error: message,
         finishedAt: this.iso(this.now())
       });
-      this.log('回滚后健康检查仍未通过，需要人工介入');
+      this.log(message);
     }
 
     return this.state;
