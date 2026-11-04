@@ -43,6 +43,14 @@ apps/*/
 *.sqlite
 *.db
 
+# Self-update runtime artifacts
+data/update-state.json
+data/update-check.json
+data/update.lock
+data/backups/
+client/dist.next/
+client/dist.prev/
+
 # PM2
 .pm2/
 
