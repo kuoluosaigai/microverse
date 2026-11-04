@@ -103,6 +103,7 @@ Specialized services:
 - **AuthManager** - Single-admin auth: bcryptjs verify, seeds admin from env on boot.
 - **BackupManager** - Per-app zip export/import with `microverse-manifest.json` (name/deploy_type/env); restore validates first, rolls back on failure, 400 on name clash.
 - **ProxyManager** - Platform-managed nginx edge reverse proxy (opt-in via `PROXY_ENABLED`): renders subdomain + root-default routes into `PROXY_CONF_FILE`, `nginx -t` then `-s reload`, rolls back on failure. Regenerated on app start/stop/delete and on boot.
+- **UpdateManager / SelfUpdater** - Platform self-update (opt-in via `SELF_UPDATE_ENABLED`; Linux + PM2 only). `UpdateManager` does the version check (`git ls-remote` + 10-min cache), preflight, atomic `data/update.lock` claim, and detached spawn; `scripts/self-update.js` does DB `VACUUM INTO` backup → ff-only pull → `npm install --include=dev` → staged client build (`dist.next` swap) → `pm2 reload` → health poll, with code/dist rollback and incomplete-update repair detection. Additive schema only; the DB is backed up but never auto-restored.
 
 **Call hierarchy**: Routes → DeployManager → AppManager + ProcessManager (+ NpmLifecycle / NginxLifecycle) → Database/PM2
 
@@ -152,6 +153,7 @@ Config hierarchy: `server/src/config/index.js`
 - Admin auth: ADMIN_USERNAME, ADMIN_PASSWORD (seeded on first boot only, race-free via `ON CONFLICT DO NOTHING`; to reset, delete the `users` row + restart), SESSION_SECRET (REQUIRED under NODE_ENV=production — config validation throws at boot; otherwise each cluster worker signs with a different key → intermittent 401), SESSION_COOKIE_SECURE (follows PROXY_SSL_ENABLED), SESSION_DB_PATH (data/sessions.sqlite; shared sqlite session store so sessions survive across cluster workers + restarts)
 - Nginx: NGINX_BIN (default `nginx` = PATH; used by BOTH the nginx deploy type AND the reverse-proxy reload)
 - Reverse proxy (opt-in edge, see ProxyManager): PROXY_ENABLED, PROXY_CONF_FILE, PROXY_BASE_DOMAIN, PROXY_SSL_ENABLED + PROXY_SSL_CERT/KEY paths (v1 does NOT issue certs — only emits the server-block shape; run certbot yourself then fill paths)
+- Self-update (opt-in, see UpdateManager/SelfUpdater): SELF_UPDATE_ENABLED (default false), SELF_UPDATE_REF (default main), SELF_UPDATE_REMOTE (default origin). Requires a git checkout and `PM2_INSTANCE_NAME` online; non-git / Windows / dirty-tree / shallow-clone deployments are refused.
 
 Config is validated on startup; invalid config throws immediately.
 
@@ -202,8 +204,11 @@ Key endpoints:
 - `POST /api/apps/restore` - Restore app from backup zip (validates first, rolls back on failure, 400 on name clash)
 - `PUT|DELETE /api/apps/:id/default` - Mark/unmark an app as the root-domain default (single-default; regenerates edge proxy)
 - `POST /api/auth/login` | `POST /api/auth/logout` | `GET /api/auth/me` - Single-admin session
+- `GET /api/system/version` - Platform version + update availability (`incomplete` = an interrupted update that can be repaired)
+- `POST /api/system/update` - Start a self-update (202; 400 preflight failure; 409 already running)
+- `GET /api/system/update/status` - Update state + bounded log tail
 
-Auth: `requireAuth` gates `/api/apps*`; `/health`, `/config`, `/auth/login` are public. Rate-limited: login 5/15min/IP, API 100/min/IP (SSE exempt). Interactive API docs: swagger-ui-express at `/api-docs`; spec at `/openapi.json`.
+Auth: `requireAuth` gates `/api/apps*` and `/api/system/*`; `/health`, `/config`, `/auth/login` are public. Rate-limited: login 5/15min/IP, API 100/min/IP (SSE exempt). Interactive API docs: swagger-ui-express at `/api-docs`; spec at `/openapi.json`.
 
 ### Deployment Types
 
