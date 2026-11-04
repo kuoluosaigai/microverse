@@ -277,8 +277,9 @@ when the remote is ahead. The update helper:
 Deployed apps keep running throughout. `data/` and `apps/` are untouched, but
 the helper only supports **additive** schema changes — a release that rewrites
 or removes columns still needs a manual migration. The main DB is snapshotted
-before the update (best effort) but is **not auto-restored** on rollback, so a
-failed update leaves the database at its pre-update shape.
+before the update (best effort) but is **not auto-restored** on rollback, so
+schema changes applied by the new version remain; restore
+`data/backups/<ts>.sqlite` manually if needed.
 
 The first deployment of this feature is necessarily manual: `git pull`,
 `npm run install:all`, `npm run build:client`, `pm2 reload microverse-server`,
