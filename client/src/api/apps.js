@@ -9,6 +9,12 @@ const api = axios.create({
   }
 })
 
+// Multipart uploads are bounded by the link speed, not by server work: a 100MB
+// zip takes minutes on a slow uplink. The 10s default above aborts uploads that
+// were still progressing normally, so upload/restore get a generous cap instead
+// (still finite, so a dead connection eventually fails rather than hanging).
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
+
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
@@ -98,6 +104,7 @@ export const uploadFiles = async (id, files) => {
   }
 
   const response = await api.post(`/apps/${id}/upload`, formData, {
+    timeout: UPLOAD_TIMEOUT_MS,
     headers: {
       'Content-Type': 'multipart/form-data'
     }
@@ -171,6 +178,7 @@ export const restoreApp = async (file) => {
   // multipart/form-data WITH a boundary; a hand-set header omits the boundary
   // and multer rejects the body ("Multipart: Boundary not found").
   const response = await api.post('/apps/restore', form, {
+    timeout: UPLOAD_TIMEOUT_MS,
     headers: { 'Content-Type': null }
   })
   return response.data.data

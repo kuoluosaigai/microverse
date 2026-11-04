@@ -53,6 +53,12 @@ const server = app.listen(config.server.port, config.server.host, () => {
   }).catch(err => console.warn(`boot init failed: ${err.message}`));
 });
 
+// Uploads stream at the link's speed, not the server's: a large zip on a slow
+// uplink can take minutes. Node's default requestTimeout (300s, measured over
+// the whole request including the body) would abort such an upload mid-stream.
+// Match the client's 10-minute upload cap.
+server.requestTimeout = 10 * 60 * 1000;
+
 function shutdown() {
   metricsSampler.stop();
   console.log('\nShutdown signal received: closing HTTP server');
