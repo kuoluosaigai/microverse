@@ -227,8 +227,9 @@ through (shown as "not running" in the UI).
 ### Updating an existing deployment
 
 `data/*.sqlite` (apps, env, admin account) and `apps/` (deployed app files) are
-gitignored, and the DB schema self-heals on boot (`CREATE TABLE IF NOT EXISTS`),
-so updates never lose data and need no migration step.
+gitignored, so untracked data is preserved across updates, and additive schema
+changes applied on boot (`CREATE TABLE IF NOT EXISTS`) need no migration step.
+A release that rewrites or removes columns still needs a manual migration.
 
 ```bash
 git pull origin main
@@ -273,8 +274,8 @@ when the remote tip differs from the running commit. The update helper:
 3. builds the client into a staging directory and swaps it into `client/dist`
    only on success
 4. reloads the PM2 process and runs a health check
-5. rolls the code back and restores `client/dist` if the pull, build, reload,
-   or health check fails
+5. rolls the code back and restores `client/dist` if the pull, `npm install`,
+   build, reload, or health check fails
 
 Deployed apps keep running throughout. Deployed app files under `apps/` are
 untouched (the helper writes update state and backups under `data/`), but the

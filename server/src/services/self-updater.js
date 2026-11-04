@@ -248,16 +248,43 @@ class SelfUpdater {
    */
   acquireLock() {
     const payload = JSON.stringify({ pid: process.pid, startedAt: this.state.startedAt });
+    const linkUnsupported = new Set(['EPERM', 'ENOSYS', 'EOPNOTSUPP', 'ENOTSUP']);
+
+    // Create the lock atomically: write a unique temp file, then hard-link it
+    // into place (`link` fails with EEXIST). A kill between open and write can
+    // no longer leave a 0-byte lock behind — the only visible lock is a fully
+    // written one. Falls back to a `wx` write where hard links are unsupported.
     const writeExclusive = () => {
-      fs.writeFileSync(this.paths.lockPath, payload, { flag: 'wx', mode: 0o600 });
+      const tmpPath = `${this.paths.lockPath}.${process.pid}.${Date.now()}.${
+        Math.random().toString(16).slice(2)}.tmp`;
+      try {
+        fs.writeFileSync(tmpPath, payload, { mode: 0o600 });
+      } catch (err) {
+        try { fs.rmSync(tmpPath, { force: true }); } catch (_ignored) {}
+        throw err;
+      }
+
+      try {
+        fs.linkSync(tmpPath, this.paths.lockPath);
+        return true;
+      } catch (err) {
+        if (err && err.code === 'EEXIST') return false;
+        if (err && linkUnsupported.has(err.code)) {
+          try {
+            fs.writeFileSync(this.paths.lockPath, payload, { flag: 'wx', mode: 0o600 });
+            return true;
+          } catch (wxErr) {
+            if (wxErr && wxErr.code === 'EEXIST') return false;
+            throw wxErr;
+          }
+        }
+        throw err;
+      } finally {
+        try { fs.rmSync(tmpPath, { force: true }); } catch (_ignored) {}
+      }
     };
 
-    try {
-      writeExclusive();
-      return true;
-    } catch (err) {
-      if (!err || err.code !== 'EEXIST') throw err;
-    }
+    if (writeExclusive()) return true;
 
     const lock = UpdateManager.readState(this.paths.lockPath);
     if (UpdateManager.isLockStale(lock, this.now(), this.isPidAlive)) {
@@ -266,13 +293,7 @@ class SelfUpdater {
       } catch (_err) {
         // Best-effort; the exclusive retry decides whether we still race.
       }
-      try {
-        writeExclusive();
-        return true;
-      } catch (err) {
-        if (err && err.code === 'EEXIST') return false;
-        throw err;
-      }
+      return writeExclusive();
     }
 
     const inherited = lock && (lock.pid === process.pid || lock.pid === process.ppid);

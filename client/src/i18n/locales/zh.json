@@ -211,6 +211,8 @@
     "upToDate": "已是最新版本",
     "disabled": "无法更新：{{reason}}",
     "button": "立即更新",
+    "repairButton": "运行修复更新",
+    "retryButton": "重试更新",
     "confirm": "平台将重新构建并重启。正在运行的应用不受影响。",
     "checkFailed": "无法检查远程版本",
     "noVersion": "版本不可用",

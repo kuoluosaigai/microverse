@@ -225,7 +225,7 @@ pm2 reload microverse-server
 2. 执行仅快进的 pull，然后 `npm install`（包含 dev 依赖）
 3. 将前端构建到暂存目录，成功后才换到 `client/dist`
 4. 重载 PM2 进程并执行健康检查
-5. 若 pull、构建、重载或健康检查失败，则回滚代码并恢复 `client/dist`
+5. 若 pull、`npm install`、构建、重载或健康检查失败，则回滚代码并恢复 `client/dist`
 
 已部署的应用全程继续运行。`apps/` 下的已部署应用文件不受影响（helper 只在
 `data/` 下写更新状态与备份），但 helper 只支持**增量** schema 变更 —— 重写或删除列的

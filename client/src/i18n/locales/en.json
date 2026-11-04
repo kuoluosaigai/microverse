@@ -211,6 +211,8 @@
     "upToDate": "Up to date",
     "disabled": "Update is not available: {{reason}}",
     "button": "Update now",
+    "repairButton": "Run repair update",
+    "retryButton": "Retry update",
     "confirm": "The platform will rebuild and restart. Running apps are not affected.",
     "checkFailed": "Could not check the remote version",
     "noVersion": "Version unavailable",

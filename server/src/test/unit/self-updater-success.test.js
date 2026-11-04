@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runUpdate, pollHealth } = require('../../services/self-updater');
+const { runUpdate, pollHealth, SelfUpdater } = require('../../services/self-updater');
 const UpdateManager = require('../../services/update-manager');
 
 const FROM = 'a'.repeat(40);
@@ -116,4 +116,72 @@ test('pollHealth retries transient errors until the deadline', async () => {
   });
   assert.equal(ok, true);
   assert.equal(attempts, 3);
+});
+
+function lockFixture() {
+  const { repoRoot, paths } = fixture();
+  return { repoRoot, paths };
+}
+
+function lockUpdater(repoRoot, paths, overrides = {}) {
+  return new SelfUpdater({
+    repoRoot,
+    paths,
+    isPidAlive: () => false,
+    ...overrides
+  });
+}
+
+test('helper claim writes a complete lock and leaves no temp file', () => {
+  const { repoRoot, paths } = lockFixture();
+  const updater = lockUpdater(repoRoot, paths);
+
+  assert.equal(updater.acquireLock(), true);
+
+  const lock = JSON.parse(fs.readFileSync(paths.lockPath, 'utf8'));
+  assert.equal(lock.pid, process.pid);
+  assert.equal(typeof lock.startedAt, 'string');
+
+  const leftovers = fs.readdirSync(path.dirname(paths.lockPath))
+    .filter((name) => name.startsWith('update.lock') && name.endsWith('.tmp'));
+  assert.deepEqual(leftovers, []);
+});
+
+test('helper adopts a lock owned by its parent', () => {
+  const { repoRoot, paths } = lockFixture();
+  fs.writeFileSync(paths.lockPath, JSON.stringify({
+    pid: process.ppid,
+    startedAt: new Date().toISOString()
+  }));
+
+  const updater = lockUpdater(repoRoot, paths, { isPidAlive: () => true });
+
+  assert.equal(updater.acquireLock(), true);
+  assert.equal(JSON.parse(fs.readFileSync(paths.lockPath, 'utf8')).pid, process.pid);
+});
+
+test('helper refuses a lock owned by another live process', () => {
+  const { repoRoot, paths } = lockFixture();
+  fs.writeFileSync(paths.lockPath, JSON.stringify({
+    pid: 424242,
+    startedAt: new Date().toISOString()
+  }));
+
+  const updater = lockUpdater(repoRoot, paths, { isPidAlive: () => true });
+
+  assert.equal(updater.acquireLock(), false);
+  assert.equal(JSON.parse(fs.readFileSync(paths.lockPath, 'utf8')).pid, 424242);
+});
+
+test('helper preempts a stale lock', () => {
+  const { repoRoot, paths } = lockFixture();
+  fs.writeFileSync(paths.lockPath, JSON.stringify({
+    pid: 424242,
+    startedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+  }));
+
+  const updater = lockUpdater(repoRoot, paths, { isPidAlive: () => false });
+
+  assert.equal(updater.acquireLock(), true);
+  assert.equal(JSON.parse(fs.readFileSync(paths.lockPath, 'utf8')).pid, process.pid);
 });

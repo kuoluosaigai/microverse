@@ -22,11 +22,25 @@ function UpdateModal({ version, onClose }) {
   const { t } = useTranslation()
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState(null)
+  // True only while a run is actually in progress in this view. Terminal
+  // persisted states (success/failed/rolled_back) render their result with
+  // this false so the action button stays reachable (retry/repair/new update).
   const [started, setStarted] = useState(false)
   const [state, setState] = useState(null)
   const [logTail, setLogTail] = useState([])
   const intervalRef = useRef(null)
   const closedRef = useRef(false)
+  // An update was started or observed here; closing should refresh the badge.
+  const ranRef = useRef(false)
+  // Keep `t` out of effect deps: a language switch must not refetch/re-seed
+  // the status on mount. Poll errors read the latest translator via this ref.
+  const tRef = useRef(t)
+
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+
+  const incomplete = version?.incomplete || null
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -43,8 +57,10 @@ function UpdateModal({ version, onClose }) {
       const next = data?.state || null
       setState(next)
       setLogTail(Array.isArray(data?.logTail) ? data.logTail : [])
+      if (next?.status && next.status !== 'idle') ranRef.current = true
 
       if (next?.status === 'success') {
+        setStarted(false)
         stopPolling()
         // The updated build is served only after the manager reloads the
         // platform, so pull a fresh bundle once the server is back.
@@ -52,19 +68,22 @@ function UpdateModal({ version, onClose }) {
           if (!closedRef.current) window.location.reload()
         }, RELOAD_DELAY_MS)
       } else if (next?.status === 'failed' || next?.status === 'rolled_back') {
+        setStarted(false)
         stopPolling()
       }
     } catch (err) {
       if (closedRef.current) return
       // `pm2 reload` briefly drops the HTTP API while the update keeps
-      // running. A transport error (no response) is transient and polling
-      // continues; an HTTP error is a real failure, so stop and show it.
-      if (err?.response) {
-        stopPolling()
-        setStartError(err.response?.data?.error?.message || t('common.error'))
-      }
+      // running. Transport errors (no response) and 5xx responses (including
+      // 502/503/504 from the nginx edge) are transient, so keep polling. Only
+      // a definitive 4xx means the request itself is invalid: stop and show it.
+      const status = err?.response?.status
+      const fatal = status === 400 || status === 401 || status === 403 || status === 404
+      if (!fatal) return
+      stopPolling()
+      setStartError(err.response?.data?.error?.message || tRef.current('common.error'))
     }
-  }, [stopPolling, t])
+  }, [stopPolling])
 
   const startPolling = useCallback(() => {
     if (closedRef.current) return
@@ -73,8 +92,12 @@ function UpdateModal({ version, onClose }) {
     }
   }, [poll])
 
-  // Reopen/refresh continuity: resume polling for a running update and render
-  // the last terminal state (success/failed/rolled_back) as-is.
+  // Reopen/refresh continuity: render the persisted state as-is and resume
+  // polling only for a live run. `started` deliberately stays false for
+  // terminal states so the button (retry/new update) remains reachable.
+  // Recovery from an interrupted update is the exception: its state file still
+  // says `running` but the server flags it as `incomplete` (dead pid), so it
+  // must render as repairable rather than as an active run.
   useEffect(() => {
     let cancelled = false
     getUpdateStatus()
@@ -83,14 +106,17 @@ function UpdateModal({ version, onClose }) {
         const next = data?.state || null
         setState(next)
         setLogTail(Array.isArray(data?.logTail) ? data.logTail : [])
-        if (next?.status && next.status !== 'idle') setStarted(true)
-        if (next?.status === 'running') startPolling()
+        if (next?.status && next.status !== 'idle') ranRef.current = true
+        if (next?.status === 'running' && !incomplete) {
+          setStarted(true)
+          startPolling()
+        }
       })
       .catch(() => {
         // Status is advisory; the update action itself still works.
       })
     return () => { cancelled = true }
-  }, [startPolling])
+  }, [startPolling, incomplete])
 
   useEffect(() => () => {
     closedRef.current = true
@@ -103,6 +129,7 @@ function UpdateModal({ version, onClose }) {
     try {
       await startSystemUpdate()
       if (closedRef.current) return
+      ranRef.current = true
       setStarted(true)
       setState({ status: 'running', step: 'queued' })
       startPolling()
@@ -118,12 +145,11 @@ function UpdateModal({ version, onClose }) {
 
   const handleClose = () => {
     stopPolling()
-    onClose(started)
+    onClose(ranRef.current)
   }
 
   const current = version?.current || null
   const latest = version?.latest || null
-  const incomplete = version?.incomplete || null
   const compareUrl =
     current?.sha && latest?.sha
       ? `${COMPARE_BASE_URL}/${current.sha}...${latest.sha}`
@@ -132,8 +158,21 @@ function UpdateModal({ version, onClose }) {
     ? (STEPS.includes(incomplete.step) ? t(`update.steps.${incomplete.step}`) : incomplete.step)
     : null
   const upToDate = Boolean(latest) && !version?.updateAvailable && !incomplete
+  // The action stays reachable after a terminal run: retry a failed/rolled-back
+  // update and repair an interrupted one, even though `data/update-state.json`
+  // keeps the last terminal state forever.
   const canUpdate = Boolean(
-    version?.updateEnabled && (version?.updateAvailable || incomplete))
+    version?.updateEnabled && (
+      version?.updateAvailable ||
+      incomplete ||
+      state?.status === 'failed' ||
+      state?.status === 'rolled_back'
+    ))
+  const actionLabel = incomplete
+    ? t('update.repairButton')
+    : state?.status === 'failed' || state?.status === 'rolled_back'
+      ? t('update.retryButton')
+      : t('update.button')
 
   return (
     <Modal
@@ -193,14 +232,13 @@ function UpdateModal({ version, onClose }) {
           <Typography.Paragraph style={{ marginTop: 12 }}>
             {t('update.confirm')}
           </Typography.Paragraph>
-          {!started && (
+          {!started && canUpdate && (
             <Button
               type="primary"
               loading={starting}
-              disabled={!canUpdate}
               onClick={handleUpdate}
             >
-              {t('update.button')}
+              {actionLabel}
             </Button>
           )}
         </div>
@@ -210,7 +248,7 @@ function UpdateModal({ version, onClose }) {
         <Alert style={{ marginTop: 16 }} type="error" showIcon message={startError} />
       )}
 
-      {state?.status === 'running' && (
+      {started && state?.status === 'running' && (
         <Alert
           style={{ marginTop: 16 }}
           type="info"
@@ -256,7 +294,7 @@ function UpdateModal({ version, onClose }) {
         />
       )}
 
-      {started && (
+      {state && state.status !== 'idle' && (
         <>
           <div style={{ marginTop: 16 }}>
             <ol className="update-steps">

@@ -33,7 +33,7 @@ function UpdateBadge() {
   return (
     <>
       <button type="button" className="nav-link" onClick={() => setModalOpen(true)}>
-        {version.updateAvailable && (
+        {(version.updateAvailable || version.incomplete) && (
           <>
             <span aria-hidden>●</span> {t('update.available')}{' · '}
           </>
