@@ -380,6 +380,53 @@ class UpdateManager {
 
     return { ok: true, fromSha: current.sha, toSha: latest.sha };
   }
+
+  /**
+   * Record a `running` state and spawn the detached self-update runner
+   * (scripts/self-update.js). Returns the child pid; the runner owns the
+   * lock and rewrites the state file as it progresses.
+   *
+   * @param {{fromSha: string, toSha: string}} args
+   * @returns {Promise<{pid: number}>}
+   */
+  static async startUpdate({ fromSha, toSha }) {
+    const paths = this.getPaths();
+    const startedAt = new Date().toISOString();
+    const state = {
+      status: 'running', step: 'queued', fromSha, toSha,
+      startedAt, finishedAt: null, error: null, warning: null,
+      logPath: paths.logPath, pid: process.pid
+    };
+    this.writeState(paths.statePath, state);
+    const child = this.spawnDetached(process.execPath, [
+      path.join(paths.repoRoot, 'scripts', 'self-update.js'), '--from', fromSha, '--to', toSha
+    ], { cwd: paths.repoRoot, detached: true, stdio: 'ignore' });
+    child.unref();
+    state.pid = child.pid;
+    this.writeState(paths.statePath, state);
+    return { pid: child.pid };
+  }
+
+  /**
+   * Spawn indirection kept as its own method so tests can stub the runner
+   * launch without touching child_process.
+   */
+  static spawnDetached(file, args, options) {
+    const { spawn } = require('child_process');
+    return spawn(file, args, options);
+  }
+
+  /**
+   * Poll payload for the update banner: the last recorded state (idle when
+   * none/corrupt) plus a bounded tail of the runner log.
+   */
+  static async getUpdateStatus() {
+    const paths = this.getPaths();
+    return {
+      state: this.readState(paths.statePath) || { status: 'idle' },
+      logTail: this.readLogTail(paths.logPath)
+    };
+  }
 }
 
 module.exports = UpdateManager;
