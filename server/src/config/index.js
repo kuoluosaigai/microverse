@@ -92,6 +92,14 @@ const config = {
     instanceName: process.env.PM2_INSTANCE_NAME || 'microverse-server'
   },
 
+  // Platform self-update (opt-in): pull SELF_UPDATE_REF from SELF_UPDATE_REMOTE,
+  // build into client/dist.next, health-check, then swap dists + pm2 reload.
+  selfUpdate: {
+    enabled: process.env.SELF_UPDATE_ENABLED === 'true',
+    ref: process.env.SELF_UPDATE_REF || 'main',
+    remote: process.env.SELF_UPDATE_REMOTE || 'origin'
+  },
+
   // Auth (single admin login)
   auth: {
     adminUsername: process.env.ADMIN_USERNAME || 'admin',
