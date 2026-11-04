@@ -26,6 +26,7 @@ function UpdateModal({ version, onClose }) {
   const [state, setState] = useState(null)
   const [logTail, setLogTail] = useState([])
   const intervalRef = useRef(null)
+  const closedRef = useRef(false)
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -34,11 +35,11 @@ function UpdateModal({ version, onClose }) {
     }
   }, [])
 
-  useEffect(() => stopPolling, [stopPolling])
-
   const poll = useCallback(async () => {
+    if (closedRef.current) return
     try {
       const data = await getUpdateStatus()
+      if (closedRef.current) return
       const next = data?.state || null
       setState(next)
       setLogTail(Array.isArray(data?.logTail) ? data.logTail : [])
@@ -47,14 +48,53 @@ function UpdateModal({ version, onClose }) {
         stopPolling()
         // The updated build is served only after the manager reloads the
         // platform, so pull a fresh bundle once the server is back.
-        window.setTimeout(() => window.location.reload(), RELOAD_DELAY_MS)
+        window.setTimeout(() => {
+          if (!closedRef.current) window.location.reload()
+        }, RELOAD_DELAY_MS)
       } else if (next?.status === 'failed' || next?.status === 'rolled_back') {
         stopPolling()
       }
-    } catch {
-      // Transient by design: `pm2 reload` briefly drops the HTTP API while the
-      // update keeps running. Treat connection errors as "not ready yet".
+    } catch (err) {
+      if (closedRef.current) return
+      // `pm2 reload` briefly drops the HTTP API while the update keeps
+      // running. A transport error (no response) is transient and polling
+      // continues; an HTTP error is a real failure, so stop and show it.
+      if (err?.response) {
+        stopPolling()
+        setStartError(err.response?.data?.error?.message || t('common.error'))
+      }
     }
+  }, [stopPolling, t])
+
+  const startPolling = useCallback(() => {
+    if (closedRef.current) return
+    if (intervalRef.current === null) {
+      intervalRef.current = window.setInterval(poll, POLL_INTERVAL_MS)
+    }
+  }, [poll])
+
+  // Reopen/refresh continuity: resume polling for a running update and render
+  // the last terminal state (success/failed/rolled_back) as-is.
+  useEffect(() => {
+    let cancelled = false
+    getUpdateStatus()
+      .then((data) => {
+        if (cancelled || closedRef.current) return
+        const next = data?.state || null
+        setState(next)
+        setLogTail(Array.isArray(data?.logTail) ? data.logTail : [])
+        if (next?.status && next.status !== 'idle') setStarted(true)
+        if (next?.status === 'running') startPolling()
+      })
+      .catch(() => {
+        // Status is advisory; the update action itself still works.
+      })
+    return () => { cancelled = true }
+  }, [startPolling])
+
+  useEffect(() => () => {
+    closedRef.current = true
+    stopPolling()
   }, [stopPolling])
 
   const handleUpdate = async () => {
@@ -62,14 +102,17 @@ function UpdateModal({ version, onClose }) {
     setStartError(null)
     try {
       await startSystemUpdate()
+      if (closedRef.current) return
       setStarted(true)
       setState({ status: 'running', step: 'queued' })
-      intervalRef.current = window.setInterval(poll, POLL_INTERVAL_MS)
+      startPolling()
       poll()
     } catch (err) {
+      if (closedRef.current) return
       setStartError(err.response?.data?.error?.message || t('common.error'))
     } finally {
-      setStarting(false)
+      // Never touch state after the modal was closed while starting.
+      if (!closedRef.current) setStarting(false)
     }
   }
 
@@ -80,10 +123,17 @@ function UpdateModal({ version, onClose }) {
 
   const current = version?.current || null
   const latest = version?.latest || null
+  const incomplete = version?.incomplete || null
   const compareUrl =
     current?.sha && latest?.sha
       ? `${COMPARE_BASE_URL}/${current.sha}...${latest.sha}`
       : null
+  const incompleteStepLabel = incomplete?.step
+    ? (STEPS.includes(incomplete.step) ? t(`update.steps.${incomplete.step}`) : incomplete.step)
+    : null
+  const upToDate = Boolean(latest) && !version?.updateAvailable && !incomplete
+  const canUpdate = Boolean(
+    version?.updateEnabled && (version?.updateAvailable || incomplete))
 
   return (
     <Modal
@@ -117,6 +167,15 @@ function UpdateModal({ version, onClose }) {
         </div>
       </div>
 
+      {incomplete && (
+        <Alert
+          style={{ marginTop: 16 }}
+          type="warning"
+          showIcon
+          message={t('update.incomplete', { step: incompleteStepLabel || '—' })}
+        />
+      )}
+
       {version?.updateEnabled === false ? (
         <Alert
           style={{ marginTop: 16 }}
@@ -126,16 +185,21 @@ function UpdateModal({ version, onClose }) {
         />
       ) : (
         <div style={{ marginTop: 16 }}>
-          <Alert
-            type={version?.updateAvailable ? 'info' : 'success'}
-            showIcon
-            message={version?.updateAvailable ? t('update.available') : t('update.upToDate')}
-          />
+          {version?.updateAvailable ? (
+            <Alert type="info" showIcon message={t('update.available')} />
+          ) : upToDate ? (
+            <Alert type="success" showIcon message={t('update.upToDate')} />
+          ) : null}
           <Typography.Paragraph style={{ marginTop: 12 }}>
             {t('update.confirm')}
           </Typography.Paragraph>
           {!started && (
-            <Button type="primary" loading={starting} onClick={handleUpdate}>
+            <Button
+              type="primary"
+              loading={starting}
+              disabled={!canUpdate}
+              onClick={handleUpdate}
+            >
               {t('update.button')}
             </Button>
           )}
@@ -155,13 +219,23 @@ function UpdateModal({ version, onClose }) {
         />
       )}
       {state?.status === 'success' && (
-        <Alert
-          style={{ marginTop: 16 }}
-          type="success"
-          showIcon
-          message={t('update.status.success')}
-          description={t('update.reloadSoon')}
-        />
+        <>
+          <Alert
+            style={{ marginTop: 16 }}
+            type="success"
+            showIcon
+            message={t('update.status.success')}
+            description={t('update.reloadSoon')}
+          />
+          {state.warning && (
+            <Alert
+              style={{ marginTop: 8 }}
+              type="warning"
+              showIcon
+              message={state.warning}
+            />
+          )}
+        </>
       )}
       {state?.status === 'rolled_back' && (
         <Alert

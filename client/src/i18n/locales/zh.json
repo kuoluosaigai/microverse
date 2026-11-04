@@ -214,6 +214,7 @@
     "confirm": "平台将重新构建并重启。正在运行的应用不受影响。",
     "checkFailed": "无法检查远程版本",
     "noVersion": "版本不可用",
+    "incomplete": "上次更新未完成（停在「{{step}}」）。请运行修复更新以完成它。",
     "status": {
       "running": "更新中…",
       "success": "更新完成",

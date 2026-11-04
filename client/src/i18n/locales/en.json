@@ -214,6 +214,7 @@
     "confirm": "The platform will rebuild and restart. Running apps are not affected.",
     "checkFailed": "Could not check the remote version",
     "noVersion": "Version unavailable",
+    "incomplete": "The last update did not finish (stalled at {{step}}). Run a repair update to complete it.",
     "status": {
       "running": "Updating…",
       "success": "Update complete",
