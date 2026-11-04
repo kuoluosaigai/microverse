@@ -339,7 +339,8 @@ git commit -m "feat(update): check versions and preflight platform updates"
 - Consumes: `UpdateManager.getVersionInfo()`, `preflight()`, `startUpdate({ fromSha, toSha })`, `getUpdateStatus()`.
 - Produces: `GET /api/system/version`, `POST /api/system/update`, `GET /api/system/update/status`.
   `UpdateManager.startUpdate` and `getUpdateStatus` are implemented here as thin wrappers around Task 1 primitives:
-  - `startUpdate({ fromSha, toSha }) -> { pid }`
+  - `startUpdate({ fromSha, toSha, paths? }) -> { ok:true, pid } | { ok:false, httpStatus, message }`
+    (validates both SHAs, claims the lock atomically with `wx`, writes state, spawns)
   - `getUpdateStatus() -> { state, logTail }` with `state` defaulting to `{ status:'idle' }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -389,7 +390,7 @@ test('POST /api/system/update starts once and returns 202', async () => {
   mock.method(UpdateManager, 'startUpdate', async (args) => {
     starts += 1;
     assert.deepEqual(args, { fromSha: 'aaa', toSha: 'bbb' });
-    return { pid: 4242 };
+    return { ok: true, pid: 4242 };
   });
   try {
     const res = await agent.post('/api/system/update');
@@ -441,8 +442,11 @@ router.post('/system/update', async (req, res, next) => {
     if (!pre.ok) {
       return res.status(pre.httpStatus).json({ success: false, error: { message: pre.message } });
     }
-    const { pid } = await UpdateManager.startUpdate({ fromSha: pre.fromSha, toSha: pre.toSha });
-    res.status(202).json({ success: true, data: { status: 'running', pid } });
+    const started = await UpdateManager.startUpdate({ fromSha: pre.fromSha, toSha: pre.toSha });
+    if (!started.ok) {
+      return res.status(started.httpStatus).json({ success: false, error: { message: started.message } });
+    }
+    res.status(202).json({ success: true, data: { status: 'running', pid: started.pid } });
   } catch (error) { next(error); }
 });
 
@@ -460,24 +464,12 @@ In `server/src/routes/index.js`, import `updateRouter` and add `router.use(updat
 In `update-manager.js`:
 
 ```js
-static async startUpdate({ fromSha, toSha }) {
-  const paths = this.getPaths();
-  const startedAt = new Date().toISOString();
-  const state = {
-    status: 'running', step: 'queued', fromSha, toSha,
-    startedAt, finishedAt: null, error: null, warning: null,
-    logPath: paths.logPath, pid: process.pid
-  };
-  this.writeState(paths.statePath, state);
-  const child = this.spawnDetached(process.execPath, [
-    path.join(paths.repoRoot, 'scripts', 'self-update.js'), '--from', fromSha, '--to', toSha
-  ], { cwd: paths.repoRoot, detached: true, stdio: 'ignore' });
-  child.unref();
-  state.pid = child.pid;
-  this.writeState(paths.statePath, state);
-  return { pid: child.pid };
-}
-
+// final shape (see the landed implementation for the full body):
+// static async startUpdate({ fromSha, toSha, paths = this.getPaths() }) {
+//   validate SHAs -> claim lock with { flag: 'wx' } (409 on a live lock)
+//   -> write running/queued state -> spawnDetached -> on error/!pid write failed + drop lock
+//   -> rewrite lock with child.pid -> return { ok:true, pid }
+// }
 static spawnDetached(file, args, options) {
   const { spawn } = require('child_process');
   return spawn(file, args, options);
@@ -659,7 +651,7 @@ Expected: FAIL — modules not found.
 
 Implementation notes:
 - `runUpdate` merges defaults with the caller's options, then:
-  1. Acquire `paths.lockPath` (`{ pid: process.pid, startedAt: ISO }`) unless an existing non-stale lock exists — in that case write a `failed` state `'另一个更新正在进行中'` and return it.
+  1. Acquire `paths.lockPath` (`{ pid: process.pid, startedAt: ISO }`). A non-stale existing lock is accepted only when it was claimed by the spawning route: `lock.pid === process.pid || lock.pid === process.ppid`. Otherwise write a `failed` state `'另一个更新正在进行中'` and return it. Always rewrite the lock with `process.pid` before running any step.
   2. Write the initial `running` state and append a timestamped line per step to `paths.logPath` (`fs.appendFileSync`).
   3. `preflight`: `git rev-parse --is-inside-work-tree`, `git status --porcelain --untracked-files=no` empty, `git rev-parse --is-shallow-repository` is `false`, `git rev-parse HEAD` equals `fromSha`.
   4. `fetch`: `git fetch <remote> <ref>` (timeout 120000); `git merge-base --is-ancestor HEAD <remote>/<ref>` (timeout 60000) — on non-zero exit throw `'本地提交与远端分叉，拒绝更新'`; `git rev-parse <remote>/<ref>` becomes the effective `toSha` and is written to state.
@@ -863,6 +855,14 @@ test('a live lock refuses to start; a dead lock proceeds', async () => {
 
   const resumed = await runUpdate(deps(repoRoot, calls, { isPidAlive: () => false }));
   assert.equal(resumed.status, 'success');
+});
+
+test('inherits a lock claimed by the spawning parent', async () => {
+  const { repoRoot, paths } = fixture();
+  fs.writeFileSync(paths.lockPath, JSON.stringify({ pid: process.ppid, startedAt: '2026-11-05T00:00:00Z' }));
+  const calls = [];
+  const state = await runUpdate(deps(repoRoot, calls, { isPidAlive: () => true }));
+  assert.equal(state.status, 'success');
 });
 
 test('pollHealth gives up at the deadline', async () => {
