@@ -59,6 +59,35 @@ paths:
                 properties:
                   success: { type: boolean, example: true }
                   data: { $ref: '#/components/schemas/ConfigData' }
+  /system/version:
+    get:
+      tags: [System]
+      summary: Platform version and update availability
+      operationId: getSystemVersion
+      security: [{ sessionAuth: [] }]
+      responses:
+        '200': { description: Version info, content: { application/json: { schema: { type: object } } } }
+        '401': { description: Not authenticated }
+  /system/update:
+    post:
+      tags: [System]
+      summary: Start a platform self-update
+      operationId: startSystemUpdate
+      security: [{ sessionAuth: [] }]
+      responses:
+        '202': { description: Update started }
+        '400': { description: Update unavailable or preflight failed }
+        '401': { description: Not authenticated }
+        '409': { description: Update already running }
+  /system/update/status:
+    get:
+      tags: [System]
+      summary: Update progress and log tail
+      operationId: getSystemUpdateStatus
+      security: [{ sessionAuth: [] }]
+      responses:
+        '200': { description: Update state }
+        '401': { description: Not authenticated }
   /auth/login:
     post:
       tags: [Auth]
@@ -589,6 +618,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 components:
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Admin session cookie set by `POST /api/auth/login`.
   parameters:
     AppId:
       name: id

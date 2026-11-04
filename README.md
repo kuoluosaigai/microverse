@@ -252,6 +252,42 @@ keep running through the platform update.
 > Drop your local patch before pulling so it doesn't conflict:
 > `git checkout -- server/src/app.js` then `git pull`.
 
+#### Updating from the UI
+
+Platforms deployed from a git checkout can update themselves from the dashboard.
+Set `SELF_UPDATE_ENABLED=true` in `.env` and reload. Requirements:
+
+- the platform runs from a git checkout (not a copied/tarball deploy)
+- a clean working tree (no uncommitted changes) and a non-shallow clone
+- the platform runs under PM2 and `PM2_INSTANCE_NAME` matches the online process
+- Linux/macOS (self-update is not supported on Windows)
+- the tracked branch/remote are configurable via `SELF_UPDATE_REF` (default
+  `main`) and `SELF_UPDATE_REMOTE` (default `origin`)
+
+Once enabled, the version badge shows the running commit and offers **Update**
+when the remote is ahead. The update helper:
+
+1. snapshots `data/microverse.sqlite` into `data/backups/` (best effort)
+2. does a fast-forward-only pull, then `npm install` (including dev dependencies)
+3. builds the client into a staging directory and swaps it into `client/dist`
+   only on success
+4. reloads the PM2 process and runs a health check
+5. rolls the code back and restores `client/dist` if any step fails
+
+Deployed apps keep running throughout. `data/` and `apps/` are untouched, but
+the helper only supports **additive** schema changes — a release that rewrites
+or removes columns still needs a manual migration. The main DB is snapshotted
+before the update (best effort) but is **not auto-restored** on rollback, so a
+failed update leaves the database at its pre-update shape.
+
+The first deployment of this feature is necessarily manual: `git pull`,
+`npm run install:all`, `npm run build:client`, `pm2 reload microverse-server`,
+then set `SELF_UPDATE_ENABLED=true` and reload again. After that, updates can be
+started from the UI.
+
+See [the self-update design spec](docs/superpowers/specs/2026-11-04-self-update-design.md)
+for the full preflight checks, lock/state model, and failure modes.
+
 ## Usage
 
 ### Creating an Application

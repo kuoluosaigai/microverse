@@ -44,3 +44,12 @@
 ---
 
 **最该先做的**：第 1 项的浏览器 Restore（唯一一个已知"修了但没验过"的 Critical）。其余三项是"功能没在装齐依赖的机器上跑过 happy path"，属常规冒烟。
+
+## Platform self-update
+
+- [ ] `SELF_UPDATE_ENABLED=true` + PM2 online → badge shows `v1.0.0 · <sha>`; remote ahead → “有新版本”。
+- [ ] Click update → steps advance, log streams; page reloads into the new version.
+- [ ] Inject a build failure → state `rolled_back`, old version still served, `client/dist` intact.
+- [ ] Inject a health failure → state `rolled_back`, old version served after the second reload.
+- [ ] During an update, a deployed app stays Live.
+- [ ] `SELF_UPDATE_ENABLED=false` → badge shows version, no update button.
