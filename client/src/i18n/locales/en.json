@@ -203,6 +203,38 @@
     "saveError": "Failed to add domain",
     "deleteError": "Failed to remove domain"
   },
+  "update": {
+    "title": "Platform update",
+    "current": "Current",
+    "latest": "Latest",
+    "available": "A new version is available",
+    "upToDate": "Up to date",
+    "disabled": "Update is not available: {{reason}}",
+    "button": "Update now",
+    "confirm": "The platform will rebuild and restart. Running apps are not affected.",
+    "checkFailed": "Could not check the remote version",
+    "noVersion": "Version unavailable",
+    "status": {
+      "running": "Updating…",
+      "success": "Update complete",
+      "rolledBack": "Update failed and was rolled back",
+      "failed": "Update failed — manual intervention required"
+    },
+    "log": "Log",
+    "reloadSoon": "Reloading…",
+    "close": "Close",
+    "steps": {
+      "preflight": "Preflight checks",
+      "fetch": "Fetch",
+      "backup": "Backup",
+      "pull": "Pull changes",
+      "install": "Install dependencies",
+      "build": "Build",
+      "reload": "Reload server",
+      "health": "Health check",
+      "cleanup": "Cleanup"
+    }
+  },
   "messages": {
     "appCreated": "Application created successfully",
     "appDeleted": "Application deleted successfully",

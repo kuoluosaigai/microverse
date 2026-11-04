@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import LanguageSwitcher from './LanguageSwitcher'
+import UpdateBadge from './UpdateBadge'
 import { useAuth } from '../context/AuthContext'
 
 function EditorialShell({ right, children }) {
@@ -25,6 +26,7 @@ function EditorialShell({ right, children }) {
             Micro<em>verse</em>
           </a>
           <nav className="nav">
+            <UpdateBadge />
             {right ?? <LanguageSwitcher />}
             {user && (
               <button className="nav-link" onClick={handleLogout}>

@@ -203,6 +203,38 @@
     "saveError": "添加域名失败",
     "deleteError": "移除域名失败"
   },
+  "update": {
+    "title": "平台更新",
+    "current": "当前",
+    "latest": "最新",
+    "available": "有新版本可用",
+    "upToDate": "已是最新版本",
+    "disabled": "无法更新：{{reason}}",
+    "button": "立即更新",
+    "confirm": "平台将重新构建并重启。正在运行的应用不受影响。",
+    "checkFailed": "无法检查远程版本",
+    "noVersion": "版本不可用",
+    "status": {
+      "running": "更新中…",
+      "success": "更新完成",
+      "rolledBack": "更新失败，已回滚",
+      "failed": "更新失败 —— 需手动处理"
+    },
+    "log": "日志",
+    "reloadSoon": "正在刷新…",
+    "close": "关闭",
+    "steps": {
+      "preflight": "预检",
+      "fetch": "获取远程版本",
+      "backup": "备份",
+      "pull": "拉取更新",
+      "install": "安装依赖",
+      "build": "构建",
+      "reload": "重载服务",
+      "health": "健康检查",
+      "cleanup": "清理"
+    }
+  },
   "messages": {
     "appCreated": "应用创建成功",
     "appDeleted": "应用删除成功",
