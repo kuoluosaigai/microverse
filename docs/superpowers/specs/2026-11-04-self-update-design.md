@@ -128,7 +128,8 @@ self-update helper (独立进程，不受 reload 影响)
 
 1. `SELF_UPDATE_ENABLED` 为真；`process.platform !== 'win32'`。
 2. 没有正在运行的更新（见“锁与状态”）。
-3. git 仓库存在且 `git status --porcelain --untracked-files=no` 为空。
+3. git 仓库存在，`git status --porcelain --untracked-files=no` 为空，且
+   `git rev-parse --is-shallow-repository` 为 `false`（shallow clone 缺历史，无法可靠判断祖先关系）。
 4. `pm2 jlist` 中存在 `PM2_INSTANCE_NAME` 且状态为 `online`。只检查 CLI 可解析不够：
    否则会等 pull/install/build 全部做完，才在 `pm2 reload` 失败并回滚。`exec_mode` 不强制
    cluster——fork 模式下 reload 等价于短暂 restart，仍可用。
