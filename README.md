@@ -126,6 +126,40 @@ npm run pm2:start
 > To make deployed-app **Open** links use your domain instead of `localhost`,
 > set `APP_PUBLIC_URL_TEMPLATE` (see [Configuration](#configuration)).
 
+#### Fronting the admin UI with nginx
+
+If your own nginx sits in front of `:<PORT>`, three defaults are too small and
+will bite large uploads or long-running deployments:
+
+| Directive | nginx default | Set to | Why |
+|---|---|---|---|
+| `client_max_body_size` | `1m` | `100m` (or your `MAX_FILE_SIZE`) | uploads and backup restores above 1MB get **413** |
+| `proxy_read_timeout` | `60s` | `600s` | `POST /api/apps/:id/start` runs `npm install` + build and can exceed 60s → **504** |
+| `proxy_send_timeout` | `60s` | `600s` | slow request bodies on poor uplinks |
+
+```nginx
+server {
+    listen 80;
+    server_name microverse.example.com;
+
+    client_max_body_size 100m;
+    proxy_read_timeout   600s;
+    proxy_send_timeout   600s;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+`client_body_timeout` does not need raising: it measures idle time between reads,
+not total upload time. Reload after editing with `sudo nginx -t && sudo nginx -s reload`.
+
 #### Environment notes (real-world deployment gotchas)
 
 Collected from an openEuler 24.09 / Node 22 / npm 12 deployment:
