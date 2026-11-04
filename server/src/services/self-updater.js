@@ -28,6 +28,7 @@ const STEPS = [
 ];
 
 const GIT_TIMEOUT_MS = 30000;
+const GIT_ROLLBACK_TIMEOUT_MS = 60000;
 const FETCH_TIMEOUT_MS = 120000;
 const NPM_TIMEOUT_MS = 15 * 60 * 1000;
 const PM2_TIMEOUT_MS = 60000;
@@ -419,6 +420,95 @@ class SelfUpdater {
   }
 
   /**
+   * Put the pre-update `dist` back after a failed update.
+   *
+   * The live `dist` is only replaced when `dist.prev` exists — that directory
+   * is created by a build that completed its swap. A build that failed before
+   * the swap leaves the original `dist` in place, so removing it would destroy
+   * the only working copy. Any leftover `dist.next` is always discarded.
+   */
+  restoreDist() {
+    if (fs.existsSync(this.prevDir)) {
+      fs.rmSync(this.distDir, { recursive: true, force: true });
+      fs.renameSync(this.prevDir, this.distDir);
+    }
+    fs.rmSync(this.nextDir, { recursive: true, force: true });
+  }
+
+  /**
+   * Undo a failure in the pull → health range: reset tracked files to the
+   * pre-update sha, restore the staged-build swap, reinstall whatever the old
+   * code needs, reload and re-check health.
+   *
+   * Every step is best-effort except the final health verdict: a rollback that
+   * itself fails must still produce a final state, flagged for manual
+   * intervention.
+   *
+   * @param {Error} err - the error that triggered the rollback
+   * @returns {Promise<object>} final state
+   */
+  async rollback(err) {
+    const cause = errorMessage(err);
+    this.log(`回滚开始：${cause}`);
+
+    if (this.fromSha) {
+      try {
+        await this.git(['reset', '--hard', this.fromSha], GIT_ROLLBACK_TIMEOUT_MS);
+        this.log(`代码已回滚到 ${this.fromSha}`);
+      } catch (resetErr) {
+        this.log(`代码回滚失败：${errorMessage(resetErr)}`);
+      }
+    }
+
+    try {
+      this.restoreDist();
+      this.log('client/dist 已恢复');
+    } catch (distErr) {
+      this.log(`client/dist 恢复失败：${errorMessage(distErr)}`);
+    }
+
+    try {
+      await this.runNpm(
+        ['install', '--include=dev', '--no-audit', '--no-fund'],
+        { cwd: this.repoRoot, timeout: NPM_TIMEOUT_MS }
+      );
+    } catch (npmErr) {
+      this.log(`回滚后 npm install 失败（忽略）：${errorMessage(npmErr)}`);
+    }
+
+    try {
+      await this.runPm2(['reload', this.pm2Name], { timeout: PM2_TIMEOUT_MS });
+    } catch (pm2Err) {
+      this.log(`回滚后 reload 失败：${errorMessage(pm2Err)}`);
+    }
+
+    let healthy = false;
+    try {
+      healthy = await this.healthCheck();
+    } catch (healthErr) {
+      this.log(`回滚后健康检查失败：${errorMessage(healthErr)}`);
+    }
+
+    if (healthy) {
+      this.save({
+        status: 'rolled_back',
+        error: cause,
+        finishedAt: this.iso(this.now())
+      });
+      this.log(`更新失败，已回滚：${cause}`);
+    } else {
+      this.save({
+        status: 'failed',
+        error: `更新失败，且回滚后健康检查仍未通过，需要人工介入（${cause}）`,
+        finishedAt: this.iso(this.now())
+      });
+      this.log('回滚后健康检查仍未通过，需要人工介入');
+    }
+
+    return this.state;
+  }
+
+  /**
    * Final bookkeeping: `npm install` may rewrite the lockfile, which is the
    * only working-tree change we silently accept. Anything else is surfaced as
    * a warning but does not fail an otherwise healthy update.
@@ -444,7 +534,12 @@ class SelfUpdater {
 
   /**
    * Run the whole update. Never throws: every failure is recorded in the
-   * returned state (rollback is layered on top in Task 5).
+   * returned state.
+   *
+   * Failures in preflight/fetch/backup happen before anything is modified, so
+   * they are plain `failed` states. Once tracked files can change (pull →
+   * health) a failure triggers a full rollback and ends as `rolled_back` (the
+   * old code is healthy again) or `failed` (manual intervention required).
    *
    * @returns {Promise<object>} final state
    */
@@ -473,14 +568,22 @@ class SelfUpdater {
       this.save({ status: 'running' });
       this.log(`更新开始：${this.fromSha || '(unknown)'} -> ${this.toSha || '(unknown)'}`);
 
+      // Nothing has been modified yet: a failure here needs no rollback.
       await this.step('preflight', () => this.preflightStep());
       await this.step('fetch', () => this.fetchStep());
       await this.step('backup', () => this.backupStep());
-      await this.step('pull', () => this.pullStep());
-      await this.step('install', () => this.installStep());
-      await this.step('build', () => this.buildStep());
-      await this.step('reload', () => this.reloadStep());
-      await this.step('health', () => this.healthStep());
+
+      try {
+        await this.step('pull', () => this.pullStep());
+        await this.step('install', () => this.installStep());
+        await this.step('build', () => this.buildStep());
+        await this.step('reload', () => this.reloadStep());
+        await this.step('health', () => this.healthStep());
+      } catch (err) {
+        // Returned from inside the outer try so the lock is still released.
+        return await this.rollback(err);
+      }
+
       await this.step('cleanup', () => this.cleanupStep());
 
       this.save({ status: 'success', error: null, finishedAt: this.iso(this.now()) });
