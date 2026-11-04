@@ -961,7 +961,9 @@ English values (Chinese mirror): `title: "Platform update"`, `current: "Current"
 
 Behavior:
 - On mount, call `getSystemVersion()`; on failure keep `version` null and render nothing.
-- Render a `button` with class `nav-link` showing `v{version.version} · {version.current.shortSha}` (or `t('update.noVersion')` when `current` is null).
+- Render a `button` with class `nav-link`. When `version.current` exists, show
+  `v{version.current.version} · {version.current.shortSha}`; otherwise show
+  `t('update.noVersion')`.
 - If `updateAvailable`, prefix a `<span aria-hidden>●</span>` and the label `t('update.available')`.
 - Clicking opens `<UpdateModal version={version} onClose={...} />`.
 - Refresh the version when the modal closes after an update.
