@@ -279,20 +279,32 @@ class UpdateManager {
   }
 
   /**
+   * A plausible git sha: 7-40 lowercase hex characters. Used to reject
+   * request-supplied shas before they reach the runner's argument array.
+   */
+  static isValidSha(value) {
+    return /^[0-9a-f]{7,40}$/.test(String(value || ''));
+  }
+
+  /**
+   * True when `pid` exists. EPERM means it exists but belongs to another user.
+   * Exported for the update runner (Task 4), which reuses the same check.
+   */
+  static isPidAlive(pid) {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return Boolean(err && err.code === 'EPERM');
+    }
+  }
+
+  /**
    * True when a live update lock is held (the lock exists and is not stale).
    */
   static isUpdateRunning(now = Date.now()) {
     const lock = this.readState(this.getPaths().lockPath);
-    const isPidAlive = (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (err) {
-        // EPERM means the process exists but belongs to another user.
-        return Boolean(err && err.code === 'EPERM');
-      }
-    };
-    return !this.isLockStale(lock, now, isPidAlive);
+    return !this.isLockStale(lock, now, this.isPidAlive);
   }
 
   /**
@@ -382,29 +394,121 @@ class UpdateManager {
   }
 
   /**
-   * Record a `running` state and spawn the detached self-update runner
-   * (scripts/self-update.js). Returns the child pid; the runner owns the
-   * lock and rewrites the state file as it progresses.
+   * Claim the update lock for the server process before spawning the runner.
+   * `wx` makes creation exclusive, so concurrent POSTs cannot both win:
+   *  - EEXIST + live lock -> conflict (no state write, no spawn)
+   *  - EEXIST + stale lock -> remove and retry the exclusive write once
    *
-   * @param {{fromSha: string, toSha: string}} args
-   * @returns {Promise<{pid: number}>}
+   * @returns {{ok:true} | {ok:false, httpStatus:number, message:string}}
    */
-  static async startUpdate({ fromSha, toSha }) {
-    const paths = this.getPaths();
+  static claimLock(paths, startedAt) {
+    const payload = JSON.stringify({ pid: process.pid, startedAt });
+    const writeExclusive = () => {
+      try {
+        fs.writeFileSync(paths.lockPath, payload, { flag: 'wx', mode: 0o600 });
+        return true;
+      } catch (err) {
+        if (err && err.code === 'EEXIST') return false;
+        throw err;
+      }
+    };
+
+    if (writeExclusive()) return { ok: true };
+
+    const lock = this.readState(paths.lockPath);
+    if (!this.isLockStale(lock, Date.now(), this.isPidAlive)) {
+      return { ok: false, httpStatus: 409, message: '已有更新正在进行' };
+    }
+    try {
+      fs.rmSync(paths.lockPath, { force: true });
+    } catch (_err) {
+      // Best-effort; the exclusive retry below decides whether we still race.
+    }
+    if (writeExclusive()) return { ok: true };
+
+    return { ok: false, httpStatus: 409, message: '已有更新正在进行' };
+  }
+
+  /**
+   * Validate, claim the lock atomically, record a `running` state and spawn
+   * the detached self-update runner (scripts/self-update.js). Returns the
+   * child pid; the runner takes over the lock and rewrites state as it
+   * progresses.
+   *
+   * @param {{fromSha: string, toSha: string, paths?: object}} args
+   * @returns {Promise<{ok:true, pid:number}
+   *   | {ok:false, httpStatus:number, message:string}>}
+   */
+  static async startUpdate({ fromSha, toSha, paths = this.getPaths() }) {
+    if (!this.isValidSha(fromSha) || !this.isValidSha(toSha)) {
+      return { ok: false, httpStatus: 400, message: 'Invalid SHA' };
+    }
+
     const startedAt = new Date().toISOString();
+    const claim = this.claimLock(paths, startedAt);
+    if (!claim.ok) return claim;
+
+    const removeLock = () => {
+      try {
+        fs.rmSync(paths.lockPath, { force: true });
+      } catch (_err) {
+        // best-effort
+      }
+    };
+
     const state = {
       status: 'running', step: 'queued', fromSha, toSha,
       startedAt, finishedAt: null, error: null, warning: null,
       logPath: paths.logPath, pid: process.pid
     };
-    this.writeState(paths.statePath, state);
-    const child = this.spawnDetached(process.execPath, [
-      path.join(paths.repoRoot, 'scripts', 'self-update.js'), '--from', fromSha, '--to', toSha
-    ], { cwd: paths.repoRoot, detached: true, stdio: 'ignore' });
-    child.unref();
-    state.pid = child.pid;
-    this.writeState(paths.statePath, state);
-    return { pid: child.pid };
+
+    const fail = (message) => {
+      try {
+        this.writeState(paths.statePath, {
+          ...state,
+          status: 'failed',
+          step: 'queued',
+          error: message,
+          finishedAt: new Date().toISOString()
+        });
+      } catch (_err) {
+        // best-effort: never let bookkeeping mask the spawn failure
+      }
+      removeLock();
+    };
+
+    try {
+      this.writeState(paths.statePath, state);
+      const child = this.spawnDetached(process.execPath, [
+        path.join(paths.repoRoot, 'scripts', 'self-update.js'), '--from', fromSha, '--to', toSha
+      ], { cwd: paths.repoRoot, detached: true, stdio: 'ignore' });
+
+      child.unref();
+      child.on('error', (err) => {
+        fail(err && err.message ? err.message : String(err));
+      });
+
+      if (!child.pid) {
+        fail('无法启动更新进程');
+        return { ok: false, httpStatus: 500, message: '无法启动更新进程' };
+      }
+
+      state.pid = child.pid;
+      this.writeState(paths.statePath, state);
+      try {
+        fs.writeFileSync(
+          paths.lockPath,
+          JSON.stringify({ pid: child.pid, startedAt }),
+          { mode: 0o600 });
+      } catch (_err) {
+        // The runner accepts a parent-owned lock (lock.pid === ppid), so a
+        // failed hand-off write must not abort an already-running update.
+      }
+      return { ok: true, pid: child.pid };
+    } catch (err) {
+      fail(err && err.message ? err.message : String(err));
+      return { ok: false, httpStatus: 500, message: '无法启动更新进程' };
+    }
   }
 
   /**

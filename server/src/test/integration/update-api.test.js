@@ -42,7 +42,7 @@ test('POST /api/system/update starts once and returns 202', async () => {
   mock.method(UpdateManager, 'startUpdate', async (args) => {
     starts += 1;
     assert.deepEqual(args, { fromSha: 'aaa', toSha: 'bbb' });
-    return { pid: 4242 };
+    return { ok: true, pid: 4242 };
   });
   try {
     const res = await agent.post('/api/system/update');
@@ -50,6 +50,18 @@ test('POST /api/system/update starts once and returns 202', async () => {
     assert.equal(res.body.data.status, 'running');
     assert.equal(res.body.data.pid, 4242);
     assert.equal(starts, 1);
+  } finally { mock.reset(); }
+});
+
+test('POST /api/system/update maps a lost lock race to 409', async () => {
+  const agent = await adminAgent();
+  mock.method(UpdateManager, 'preflight', async () => ({ ok: true, fromSha: 'aaa', toSha: 'bbb' }));
+  mock.method(UpdateManager, 'startUpdate', async () => ({ ok: false, httpStatus: 409, message: '已有更新正在进行' }));
+  try {
+    const res = await agent.post('/api/system/update');
+    assert.equal(res.status, 409);
+    assert.equal(res.body.success, false);
+    assert.match(res.body.error.message, /正在进行/);
   } finally { mock.reset(); }
 });
 

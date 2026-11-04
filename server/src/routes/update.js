@@ -19,8 +19,11 @@ router.post('/system/update', async (req, res, next) => {
     if (!pre.ok) {
       return res.status(pre.httpStatus).json({ success: false, error: { message: pre.message } });
     }
-    const { pid } = await UpdateManager.startUpdate({ fromSha: pre.fromSha, toSha: pre.toSha });
-    res.status(202).json({ success: true, data: { status: 'running', pid } });
+    const started = await UpdateManager.startUpdate({ fromSha: pre.fromSha, toSha: pre.toSha });
+    if (!started.ok) {
+      return res.status(started.httpStatus).json({ success: false, error: { message: started.message } });
+    }
+    res.status(202).json({ success: true, data: { status: 'running', pid: started.pid } });
   } catch (error) { next(error); }
 });
 
