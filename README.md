@@ -265,21 +265,29 @@ Set `SELF_UPDATE_ENABLED=true` in `.env` and reload. Requirements:
   `main`) and `SELF_UPDATE_REMOTE` (default `origin`)
 
 Once enabled, the version badge shows the running commit and offers **Update**
-when the remote is ahead. The update helper:
+when the remote tip differs from the running commit. The update helper:
 
-1. snapshots `data/microverse.sqlite` into `data/backups/` (best effort)
+1. snapshots the configured DB (default `data/microverse.sqlite`) into
+   `data/backups/` (best effort)
 2. does a fast-forward-only pull, then `npm install` (including dev dependencies)
 3. builds the client into a staging directory and swaps it into `client/dist`
    only on success
 4. reloads the PM2 process and runs a health check
-5. rolls the code back and restores `client/dist` if any step fails
+5. rolls the code back and restores `client/dist` if the pull, build, reload,
+   or health check fails
 
-Deployed apps keep running throughout. `data/` and `apps/` are untouched, but
-the helper only supports **additive** schema changes — a release that rewrites
-or removes columns still needs a manual migration. The main DB is snapshotted
+Deployed apps keep running throughout. Deployed app files under `apps/` are
+untouched (the helper writes update state and backups under `data/`), but the
+helper only supports **additive** schema changes — a release that rewrites or
+removes columns still needs a manual migration. The main DB is snapshotted
 before the update (best effort) but is **not auto-restored** on rollback, so
 schema changes applied by the new version remain; restore
 `data/backups/<ts>.sqlite` manually if needed.
+
+If the helper is killed mid-update (for example by a host reboot), the next
+version check detects the incomplete state and offers a repair update that
+reruns install/build/reload/health. To repair manually instead:
+`npm run install:all && npm run build:client && pm2 reload microverse-server`.
 
 The first deployment of this feature is necessarily manual: `git pull`,
 `npm run install:all`, `npm run build:client`, `pm2 reload microverse-server`,

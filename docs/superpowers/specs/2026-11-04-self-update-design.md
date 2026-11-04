@@ -104,6 +104,7 @@ self-update helper (独立进程，不受 reload 影响)
   "latest": { "sha": "<full>", "shortSha": "<7>", "checkedAt": "<iso>" },
   "updateAvailable": true,
   "updateEnabled": true,
+  "incomplete": { "step": "build", "startedAt": "<iso>", "fromSha": "<full>", "toSha": "<full>" },
   "reason": null
 }
 ```
@@ -119,8 +120,13 @@ self-update helper (独立进程，不受 reload 影响)
 - `updateAvailable = current && latest && current.sha !== latest.sha && !current.dirty`。
   如果 `current.sha` 不是 `latest.sha` 的祖先（本地有未推送提交），仍显示有差异，
   但 helper 在 fetch 后的权威预检会拒绝（不改任何文件）。
-- `updateEnabled` 只有在“开关打开 + 非 Windows + 是 git 仓库 + `PM2_INSTANCE_NAME`
-  在 `pm2 jlist` 中 online”时才为真；否则为 false，并在 `reason` 里说明是哪一条不满足。
+- `updateEnabled` 只有在“开关打开 + 非 Windows + 是 git 仓库（`current !== null`） +
+  `PM2_INSTANCE_NAME` 在 `pm2 jlist` 中 online”时才为真；否则为 false，并在 `reason`
+  里说明是哪一条不满足。非 git 部署没有 `current`，即使开关打开也不能更新。
+- `incomplete`：当 `data/update-state.json` 仍是 `running` 但记录的 `pid` 已不存活时，
+  返回 `{ step, startedAt, fromSha, toSha }`，否则为 `null`。它**不**影响
+  `updateAvailable`（后者仍纯粹基于 SHA 比较）；UI 看到它就提示“上次更新未完成”，
+  并允许发起修复更新。
 
 ## 更新预检（同步，在路由内）
 
@@ -135,6 +141,9 @@ self-update helper (独立进程，不受 reload 影响)
    cluster——fork 模式下 reload 等价于短暂 restart，仍可用。
 5. 仓库根可写、`data/` 可写。
 6. `git ls-remote` 成功，且远端 SHA 与本地 HEAD 不同（没有可更新内容时没必要启动 helper）。
+   例外：若 HEAD 与远端相同但存在 **未完成更新**（state 为 `running` 且 pid 已死），
+   仍允许启动一次**修复更新**（`fromSha === toSha === current.sha`）：fetch/merge 是
+   空操作，install/build/reload/health 会重新执行，从而把上一次被中断的更新收尾。
 
 **祖先 / 分叉判断不在路由里做。** `git ls-remote` 不下载对象，本地对象库里没有远端新 commit，
 `git merge-base --is-ancestor HEAD <remoteSha>` 必然失败。路由只做上述廉价检查并返回 202；
@@ -264,7 +273,7 @@ SELF_UPDATE_REMOTE=origin   # 远端名
 | 更新成功后 `npm install` 改了 lockfile | cleanup 自动 `git checkout -- package-lock.json`；不阻塞下次更新 |
 | 更新成功后其他 tracked 文件变脏 | 仍算 `success`，state 里记 warning；下次更新前需人工清理 |
 | 回滚也失败 | `failed` + 人工介入提示 |
-| helper 进程被 kill | 锁 2 小时后 stale；state 停在进行中，需人工清理 |
+| helper 进程被 kill | 版本检查发现 `running` state 的 pid 已死 → `incomplete`；UI 提示并提供修复更新（fetch/merge 空操作，install/build/reload/health 重跑）。也可手工执行 `npm run install:all && npm run build:client && pm2 reload microverse-server` |
 | 两个管理员同时点 | 第二个请求 409 |
 
 ## 测试

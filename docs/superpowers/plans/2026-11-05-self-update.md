@@ -174,8 +174,9 @@ git commit -m "feat(update): add self-update config and state primitives"
   - `UpdateManager.isPm2Online() -> Promise<boolean>`
   - `UpdateManager.isShallowRepository() -> Promise<boolean>`
   - `UpdateManager.isPlatformSupported(platform?) -> boolean`
-  - `UpdateManager.isUpdateRunning(now?) -> boolean`
-  - `UpdateManager.getVersionInfo() -> { current, latest, updateAvailable, updateEnabled, reason }`
+  - `UpdateManager.isUpdateRunning(now?) -> boolean` (a live lock, or a `running` state whose pid is alive)
+  - `UpdateManager.getIncompleteUpdate({ paths? }) -> { step, startedAt, fromSha, toSha } | null` (a `running` state whose pid is dead)
+  - `UpdateManager.getVersionInfo() -> { current, latest, updateAvailable, updateEnabled, incomplete, reason }`
   - `UpdateManager.preflight() -> { ok: true, fromSha, toSha } | { ok: false, httpStatus, message }`
 
 - [ ] **Step 1: Write the failing tests**
@@ -310,9 +311,10 @@ Implementation notes:
 - `isPm2Online`: `ProcessManager.pm2Exec(['jlist'], { timeout: 10000 })`, `JSON.parse(stdout)`, find `name === config.pm2.instanceName`, return `pm2_env.status === 'online'`; return `false` on any error.
 - `isShallowRepository`: `git rev-parse --is-shallow-repository`; return stdout trim === `'true'`; return `false` on error.
 - `isPlatformSupported(platform = process.platform)` returns `platform !== 'win32'`.
-- `isUpdateRunning(now = Date.now())`: read `getPaths().lockPath`; return `!isLockStale(lock, now, pidAlive)` where `pidAlive` uses `process.kill(pid, 0)` and treats `EPERM` as alive.
-- `preflight` order and messages: disabled → 400 `'自更新未开启 (SELF_UPDATE_ENABLED)'`; platform → 400 `'当前平台不支持自更新'`; running → 409 `'已有更新正在进行'`; non-git → 400 `'平台不是 git 部署，无法自更新'`; dirty → 400 `'工作区有未提交改动'`; shallow → 400 `'git 仓库是 shallow clone，无法安全判断祖先关系'`; latest null → 400 `'无法获取远端版本'`; same sha → 400 `'已经是最新版本'`; pm2 offline → 400 `'PM2 进程未在线（检查 PM2_INSTANCE_NAME）'`; else `{ ok:true, fromSha, toSha }`.
-- `getVersionInfo` never throws: wrap in try/catch and return `{ current:null, latest:null, updateAvailable:false, updateEnabled:false, reason: err.message }`. `updateEnabled = config.selfUpdate.enabled && isPlatformSupported() && await isPm2Online()`. `reason` names the first unmet condition (`dirty` → `'工作区有未提交改动'`).
+- `isUpdateRunning(now = Date.now())`: return true when either the lock is live (`!isLockStale(lock, now, pidAlive)`) or the state file says `running` and its `pid` is alive (the lock can lag a freshly spawned helper).
+- `getIncompleteUpdate({ paths } = {})`: return `null` unless state is `running`; return `null` when its pid is alive; otherwise return `{ step, startedAt, fromSha, toSha }`. Never throws.
+- `preflight` order and messages: disabled → 400 `'自更新未开启 (SELF_UPDATE_ENABLED)'`; platform → 400 `'当前平台不支持自更新'`; running → 409 `'已有更新正在进行'`; non-git → 400 `'平台不是 git 部署，无法自更新'`; dirty → 400 `'工作区有未提交改动'`; shallow → 400 `'git 仓库是 shallow clone，无法安全判断祖先关系'`; latest null → 400 `'无法获取远端版本'`; pm2 offline → 400 `'PM2 进程未在线（检查 PM2_INSTANCE_NAME）'`; same sha without an incomplete state → 400 `'已经是最新版本'`; same sha **with** `getIncompleteUpdate()` non-null → `{ ok:true, fromSha: current.sha, toSha: current.sha }` (repair run); else `{ ok:true, fromSha, toSha }`.
+- `getVersionInfo` never throws: wrap in try/catch and return `{ current:null, latest:null, updateAvailable:false, updateEnabled:false, incomplete:null, reason: err.message }`. `updateEnabled = config.selfUpdate.enabled && isPlatformSupported() && Boolean(current) && await isPm2Online()` (a non-git deploy has `current === null`, so it cannot update). `reason` names the first unmet condition (`dirty` → `'工作区有未提交改动'`).
 
 - [ ] **Step 4: Run to verify it passes**
 

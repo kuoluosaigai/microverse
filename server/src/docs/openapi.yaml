@@ -10,6 +10,8 @@ info:
     `{ success: boolean, data?: <T>, error?: { message: string } }`.
 
     All `/apps` endpoints require an authenticated admin session (`POST /api/auth/login`); missing/invalid session → HTTP 401.
+
+    Platform self-update operations under `/system` (`/system/version`, `/system/update`, `/system/update/status`) are also authenticated admin-only endpoints.
   license:
     name: MIT
 servers:
@@ -17,7 +19,7 @@ servers:
     description: API root (relative — works in dev and prod)
 tags:
   - name: System
-    description: Health and public configuration
+    description: Health, public configuration, and authenticated platform self-update operations
   - name: Auth
     description: Admin login / logout / session
   - name: Applications
@@ -79,6 +81,7 @@ paths:
         '400': { description: Update unavailable or preflight failed }
         '401': { description: Not authenticated }
         '409': { description: Update already running }
+        '500': { description: Failed to spawn the detached update helper }
   /system/update/status:
     get:
       tags: [System]

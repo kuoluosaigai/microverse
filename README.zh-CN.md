@@ -182,7 +182,7 @@ v1 仅 HTTP（`listen 80`），**不依赖** `PROXY_BASE_DOMAIN`——请把自�
 
 ### 更新现有部署
 
-`data/*.sqlite`（应用、环境变量、管理员账户）和 `apps/`（已部署的应用文件）都被 gitignore 忽略，且数据库 schema 在启动时会自愈（`CREATE TABLE IF NOT EXISTS`），因此更新绝不会丢失数据，也无需任何迁移步骤。
+`data/*.sqlite`（应用、环境变量、管理员账户）和 `apps/`（已部署的应用文件）都被 gitignore 忽略，且数据库 schema 在启动时会自愈（`CREATE TABLE IF NOT EXISTS`），因此更新会保留未跟踪的数据（`data/`、`apps/`），且**增量** schema 变更无需迁移；破坏性 schema 变更（重写或删除列）仍需手动迁移。
 
 ```bash
 git pull origin main
@@ -205,6 +205,44 @@ pm2 reload microverse-server
 > （例如通过某个自动化部署工具），现在仓库已官方支持此功能。
 > 请在 pull 之前丢弃你的本地补丁，以免产生冲突：
 > `git checkout -- server/src/app.js` 然后 `git pull`。
+
+#### 从界面更新
+
+从 git checkout 部署的平台可以直接在仪表板中自更新。在 `.env` 中设置
+`SELF_UPDATE_ENABLED=true` 并重载。要求：
+
+- 平台运行自 git checkout（而非复制/压缩包部署）
+- 工作区干净（没有未提交改动）且不是 shallow clone
+- 平台由 PM2 托管，且 `PM2_INSTANCE_NAME` 与实际在线进程名一致
+- Linux/macOS（Windows 不支持自更新）
+- 跟踪的分支/远端可通过 `SELF_UPDATE_REF`（默认 `main`）和
+  `SELF_UPDATE_REMOTE`（默认 `origin`）配置
+
+启用后，版本徽标会显示当前运行的 commit，并在远端与当前 commit 不同时提供
+**更新**入口。更新 helper 会：
+
+1. 将配置的数据库（默认 `data/microverse.sqlite`）快照到 `data/backups/`（尽力而为）
+2. 执行仅快进的 pull，然后 `npm install`（包含 dev 依赖）
+3. 将前端构建到暂存目录，成功后才换到 `client/dist`
+4. 重载 PM2 进程并执行健康检查
+5. 若 pull、构建、重载或健康检查失败，则回滚代码并恢复 `client/dist`
+
+已部署的应用全程继续运行。`apps/` 下的已部署应用文件不受影响（helper 只在
+`data/` 下写更新状态与备份），但 helper 只支持**增量** schema 变更 —— 重写或删除列的
+发布仍需手动迁移。主数据库在更新前会做快照（尽力而为），但回滚时**不会自动恢复**，
+因此新版本已应用的 schema 变更会保留；如需恢复，请手动还原
+`data/backups/<ts>.sqlite`。
+
+若 helper 在更新中途被杀掉（例如主机重启），下次版本检查会检测到未完成的更新，
+并提供修复更新，重新执行 install/build/reload/health。也可以手动修复：
+`npm run install:all && npm run build:client && pm2 reload microverse-server`。
+
+本功能的首次部署仍需手动完成：`git pull`、`npm run install:all`、
+`npm run build:client`、`pm2 reload microverse-server`，然后设置
+`SELF_UPDATE_ENABLED=true` 并再次重载。此后即可从界面发起更新。
+
+完整的预检、锁/状态模型与失败模式参见
+[自更新设计规范](docs/superpowers/specs/2026-11-04-self-update-design.md)。
 
 ## 用法
 
