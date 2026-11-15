@@ -73,9 +73,9 @@ function Dashboard() {
     }
   }
 
-  const handleDelete = async (appId) => {
+  const handleDelete = async (appId, deleteFiles) => {
     try {
-      await deleteApp(appId)
+      await deleteApp(appId, deleteFiles)
       message.success(t('messages.appDeleted'))
       await loadApps(true)
     } catch (error) {

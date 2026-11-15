@@ -100,6 +100,8 @@
     "clickToOpen": "点击打开应用",
     "deleteTitle": "删除应用",
     "deleteConfirm": "确定要删除此应用吗？",
+    "deleteFilesLabel": "同时删除应用文件",
+    "deleteFilesWarning": "文件不可恢复，建议先备份。",
     "directoryTitle": "部署目录",
     "directoryEmpty": "目录为空",
     "loadDirectoryError": "加载目录失败",

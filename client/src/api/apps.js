@@ -66,8 +66,10 @@ export const createApp = async (name, deployType) => {
 /**
  * Delete an application
  */
-export const deleteApp = async (id) => {
-  const response = await api.delete(`/apps/${id}`)
+export const deleteApp = async (id, deleteFiles = false) => {
+  const response = await api.delete(`/apps/${id}`, {
+    params: deleteFiles ? { deleteFiles: true } : {}
+  })
   return response.data.data
 }
 

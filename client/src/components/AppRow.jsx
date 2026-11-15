@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Modal, Spin, Popconfirm, message, Switch } from 'antd'
+import { Modal, Spin, Checkbox, message, Switch } from 'antd'
 import { FolderFilled, FileOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { getAppFiles, backupAppUrl } from '../api/apps'
@@ -18,6 +18,8 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
   const [files, setFiles] = useState([])
   const [loadingDir, setLoadingDir] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteFiles, setDeleteFiles] = useState(false)
   const starting = startingId === app.id
 
   const openDir = async () => {
@@ -144,18 +146,13 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
               <span className="default-toggle__label">{t('appCard.rootDefault')}</span>
             </span>
           )}
-          <Popconfirm
-            title={t('appCard.deleteTitle')}
-            description={t('appCard.deleteConfirm')}
-            onConfirm={() => onDelete(app.id)}
-            okText={t('common.yes')}
-            cancelText={t('common.no')}
+          <button
+            className="act"
+            onClick={() => setDeleteOpen(true)}
             disabled={isRunning}
           >
-            <button className="act" disabled={isRunning}>
-              {t('appCard.delete')}
-            </button>
-          </Popconfirm>
+            {t('appCard.delete')}
+          </button>
         </div>
       </li>
 
@@ -193,6 +190,36 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
               </li>
             ))}
           </ul>
+        )}
+      </Modal>
+
+      <Modal
+        title={t('appCard.deleteTitle')}
+        open={deleteOpen}
+        onOk={() => {
+          setDeleteOpen(false)
+          onDelete(app.id, deleteFiles)
+          setDeleteFiles(false)
+        }}
+        onCancel={() => {
+          setDeleteOpen(false)
+          setDeleteFiles(false)
+        }}
+        okText={t('common.yes')}
+        cancelText={t('common.no')}
+        okButtonProps={{ danger: true, disabled: isRunning }}
+      >
+        <p>{t('appCard.deleteConfirm')}</p>
+        <Checkbox
+          checked={deleteFiles}
+          onChange={(e) => setDeleteFiles(e.target.checked)}
+        >
+          {t('appCard.deleteFilesLabel')}
+        </Checkbox>
+        {deleteFiles && (
+          <p style={{ marginTop: 12, marginBottom: 0, color: 'var(--accent)' }}>
+            {t('appCard.deleteFilesWarning')}
+          </p>
         )}
       </Modal>
 

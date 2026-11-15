@@ -100,6 +100,8 @@
     "clickToOpen": "Click to open app",
     "deleteTitle": "Delete application",
     "deleteConfirm": "Are you sure you want to delete this app?",
+    "deleteFilesLabel": "Also delete app files",
+    "deleteFilesWarning": "Files cannot be recovered. Back up first if unsure.",
     "directoryTitle": "Deployment Directory",
     "directoryEmpty": "Directory is empty",
     "loadDirectoryError": "Failed to load directory",
