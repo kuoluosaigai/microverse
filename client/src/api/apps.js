@@ -53,13 +53,74 @@ export const getAppById = async (id) => {
 }
 
 /**
- * Create a new application
+ * Create a new application. `git` (optional) binds a Git source in the same
+ * request so first deploy is driven by the repository.
+ * @param {string} name
+ * @param {string} deployType
+ * @param {{url: string, branch?: string, autoUpdate?: boolean}|null} [git]
  */
-export const createApp = async (name, deployType) => {
-  const response = await api.post('/apps', {
+export const createApp = async (name, deployType, git) => {
+  const payload = {
     name,
     deploy_type: deployType
-  })
+  }
+  if (git) {
+    payload.git_url = git.url
+    payload.git_branch = git.branch
+    payload.git_auto_update = git.autoUpdate
+  }
+  const response = await api.post('/apps', payload)
+  return response.data.data
+}
+
+/**
+ * Get an app's Git binding (404 when no source is bound).
+ */
+export const getAppGit = async (id) => {
+  const response = await api.get(`/apps/${id}/git`)
+  return response.data.data
+}
+
+/**
+ * Bind or re-bind the app's Git source.
+ * @param {number} id
+ * @param {{url: string, branch?: string, autoUpdate?: boolean}} source
+ */
+export const bindAppGit = async (id, { url, branch, autoUpdate }) => {
+  const response = await api.put(`/apps/${id}/git`, { url, branch, autoUpdate })
+  return response.data.data
+}
+
+/**
+ * Remove the app's Git binding (deployed files are untouched).
+ */
+export const unbindAppGit = async (id) => {
+  const response = await api.delete(`/apps/${id}/git`)
+  return response.data.data
+}
+
+/**
+ * Rotate the webhook secret (binding and deploy progress stay).
+ */
+export const rotateAppGitSecret = async (id) => {
+  const response = await api.post(`/apps/${id}/git/secret`)
+  return response.data.data
+}
+
+/**
+ * Compare the deployed commit with the remote branch head (no worktree changes).
+ */
+export const checkAppGit = async (id) => {
+  const response = await api.post(`/apps/${id}/git/check`)
+  return response.data.data
+}
+
+/**
+ * Pull the branch, rebuild and restart. Runs a full lifecycle server-side, so
+ * disable the default 10s axios timeout.
+ */
+export const pullAppGit = async (id) => {
+  const response = await api.post(`/apps/${id}/git/pull`, {}, { timeout: 0 })
   return response.data.data
 }
 

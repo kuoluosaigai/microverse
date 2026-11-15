@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Form, Input, Select, Button, message } from 'antd'
+import { Form, Input, Select, Button, Switch, Divider, message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import EditorialShell from '../components/EditorialShell'
 import { createApp } from '../api/apps'
@@ -11,12 +11,23 @@ function CreateApp() {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const [form] = Form.useForm()
+  const gitUrl = Form.useWatch('git_url', form)
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (values) => {
     try {
       setLoading(true)
-      await createApp(values.name, values.deploy_type)
+      await createApp(
+        values.name,
+        values.deploy_type,
+        values.git_url
+          ? {
+              url: values.git_url,
+              branch: values.git_branch || 'main',
+              autoUpdate: values.git_auto_update !== false
+            }
+          : null
+      )
       message.success(t('createApp.successMessage'))
       navigate('/')
     } catch (error) {
@@ -65,6 +76,39 @@ function CreateApp() {
             <Option value="nginx">{t('createApp.nginx')}</Option>
           </Select>
         </Form.Item>
+
+        <Divider orientation="start" plain>
+          {t('createApp.gitSection')}
+        </Divider>
+
+        <Form.Item
+          label={t('createApp.gitUrl')}
+          name="git_url"
+          extra={t('createApp.gitHelp')}
+        >
+          <Input placeholder={t('createApp.gitUrlPlaceholder')} />
+        </Form.Item>
+
+        {gitUrl && (
+          <>
+            <Form.Item
+              label={t('createApp.gitBranch')}
+              name="git_branch"
+              initialValue="main"
+            >
+              <Input placeholder="main" />
+            </Form.Item>
+
+            <Form.Item
+              label={t('createApp.gitAutoUpdate')}
+              name="git_auto_update"
+              valuePropName="checked"
+              initialValue={true}
+            >
+              <Switch />
+            </Form.Item>
+          </>
+        )}
 
         <Form.Item style={{ marginBottom: 0 }}>
           <Button
