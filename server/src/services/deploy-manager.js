@@ -2,6 +2,7 @@ const AppManager = require('./app-manager');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
 const NginxLifecycle = require('./nginx-lifecycle');
+const GitLifecycle = require('./git-lifecycle');
 const ProxyManager = require('./proxy-manager');
 const { queries } = require('../db');
 const config = require('../config');
@@ -70,65 +71,99 @@ class DeployManager {
     // with "already running", and a live one must not be launched twice.
     const app = await this.reconcileStatus(appId);
 
-    // Validate app can be deployed
-    const validation = await AppManager.validateAppDeployment(appId);
-    if (!validation.valid) {
-      throw new Error(validation.message);
-    }
-
-    // Check if already running
+    // Check if already running BEFORE any git work: a start must never fetch
+    // and hard-reset the worktree under a live process.
     if (app.status === 'running') {
       throw new Error('App is already running');
     }
 
-    // Assign port if needed — http-server, nginx, and npm all get a platform port.
-    // npm apps receive it via the PORT env var (resolved below). Exclude ports
-    // already claimed by other apps so two apps never share a port.
-    if (!app.port) {
-      // Serialize the read-claimed -> pick -> write critical section. Two
-      // concurrent starts can no longer pick the same free port. npm
-      // install / build / startProcess stay outside the lock — they don't
-      // contend on port selection and can be slow.
-      app.port = await exclusive(async () => {
-        const claimed = (await queries.getAllClaimedPorts()).map(r => r.port);
-        const port = await ProcessManager.findAvailablePort(
-          config.deployment.portRangeMin,
-          config.deployment.portRangeMax,
-          { exclude: claimed }
-        );
-        await AppManager.updateApp(appId, { port });
-        return port;
-      });
-    }
-
-    // Start the process. For npm: install → build → resolve env → launch with env.
-    // For nginx: generate the per-app config and pre-flight it (binary present +
-    // config valid) before launch, so failures surface as clean 400s.
-    if (app.deploy_type === 'npm') {
-      // install/build run only when their fingerprint changed (or the step never
-      // completed), so a plain stop→start doesn't reinstall + rebuild.
-      await NpmLifecycle.ensureBuilt(appId, app.path);
-      const env = await NpmLifecycle.resolveEnv(appId, app.port);
-      await ProcessManager.startProcess(app, { env });
-    } else if (app.deploy_type === 'nginx') {
-      const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
-      const result = await NginxLifecycle.testConfig(confPath);
-      if (!result.ok) {
-        throw new Error(result.message);
+    // The DB claim is the cross-worker single-flight guard for everything that
+    // touches the app directory (git → install/build → launch). It is held until
+    // the process is up and released exactly once below (success or failure).
+    const source = await queries.getAppGitSource(appId);
+    let gitClaimed = false;
+    let gitCommit = null;
+    if (source) {
+      gitClaimed = await queries.claimGitSync(appId, config.git.staleSyncMs);
+      if (!gitClaimed) throw new Error('Update in progress');
+      try {
+        const prepared = await GitLifecycle.prepareForStart(app, source);
+        gitCommit = prepared.commit;
+        // A fetch failure is not fatal: the last good checkout still starts.
+        if (prepared.warning) console.warn(`[git] ${app.name}: ${prepared.warning}`);
+      } catch (err) {
+        // Clone (or checkout inspection) failed — nothing safe to launch. Do NOT
+        // release inside the try below: releasing here is the only exit path.
+        await queries.finishGitSync(appId, { status: 'failed', error: err.message });
+        throw err;
       }
-      await ProcessManager.startProcess(app, { nginxConf: confPath });
-    } else {
-      await ProcessManager.startProcess(app);
     }
 
-    // Update status in database
-    await queries.updateAppStatus('running', appId);
+    try {
+      // Validate app can be deployed
+      const validation = await AppManager.validateAppDeployment(appId);
+      if (!validation.valid) {
+        throw new Error(validation.message);
+      }
 
-    // Best-effort: refresh the edge-proxy routes so this app's subdomain is
-    // reachable. Never let a proxy problem block the deploy.
-    try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+      // Assign port if needed — http-server, nginx, and npm all get a platform port.
+      // npm apps receive it via the PORT env var (resolved below). Exclude ports
+      // already claimed by other apps so two apps never share a port.
+      if (!app.port) {
+        // Serialize the read-claimed -> pick -> write critical section. Two
+        // concurrent starts can no longer pick the same free port. npm
+        // install / build / startProcess stay outside the lock — they don't
+        // contend on port selection and can be slow.
+        app.port = await exclusive(async () => {
+          const claimed = (await queries.getAllClaimedPorts()).map(r => r.port);
+          const port = await ProcessManager.findAvailablePort(
+            config.deployment.portRangeMin,
+            config.deployment.portRangeMax,
+            { exclude: claimed }
+          );
+          await AppManager.updateApp(appId, { port });
+          return port;
+        });
+      }
 
-    return AppManager.getAppById(appId);
+      // Start the process. For npm: install → build → resolve env → launch with env.
+      // For nginx: generate the per-app config and pre-flight it (binary present +
+      // config valid) before launch, so failures surface as clean 400s.
+      if (app.deploy_type === 'npm') {
+        // install/build run only when their fingerprint changed (or the step never
+        // completed), so a plain stop→start doesn't reinstall + rebuild.
+        await NpmLifecycle.ensureBuilt(appId, app.path);
+        const env = await NpmLifecycle.resolveEnv(appId, app.port);
+        await ProcessManager.startProcess(app, { env });
+      } else if (app.deploy_type === 'nginx') {
+        const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
+        const result = await NginxLifecycle.testConfig(confPath);
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        await ProcessManager.startProcess(app, { nginxConf: confPath });
+      } else {
+        await ProcessManager.startProcess(app);
+      }
+
+      // Update status in database
+      await queries.updateAppStatus('running', appId);
+
+      // Best-effort: refresh the edge-proxy routes so this app's subdomain is
+      // reachable. Never let a proxy problem block the deploy.
+      try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+
+      if (gitClaimed) {
+        await queries.finishGitSync(appId, { status: 'success', deployedCommit: gitCommit });
+      }
+
+      return AppManager.getAppById(appId);
+    } catch (err) {
+      if (gitClaimed) {
+        await queries.finishGitSync(appId, { status: 'failed', error: err.message, deployedCommit: gitCommit });
+      }
+      throw err;
+    }
   }
 
   /**
@@ -160,6 +195,9 @@ class DeployManager {
   static async restartApp(appId) {
     const app = await this.reconcileStatus(appId);
 
+    // A sync owns the working tree + process right now; a restart would race it.
+    await GitLifecycle.assertNotSyncing(appId);
+
     if (app.status !== 'running') {
       throw new Error('App is not running');
     }
@@ -178,6 +216,10 @@ class DeployManager {
    * @param {{deleteFiles?: boolean}} [options] also remove the app directory.
    */
   static async deleteApp(appId, options = {}) {
+    // Refuse BEFORE touching PM2/status: deleting files out from under a sync
+    // would corrupt the checkout it is fetching into.
+    await GitLifecycle.assertNotSyncing(appId);
+
     const app = await this.reconcileStatus(appId);
     // When reconcile flipped the status and already regenerated, the conf on
     // disk no longer references this app — skip AppManager's second regenerate

@@ -216,6 +216,44 @@ class GitLifecycle {
   }
 
   /**
+   * Get the app's checkout ready for a start.
+   *
+   * Clone is mandatory (a failed clone fails the start). For an existing
+   * checkout origin is re-pointed at the stored URL first, so a URL re-bind is
+   * honored; then, when `auto_update` is on, fetch and hard-reset the worktree
+   * to the remote head. A fetch failure is NOT fatal: the app starts on the
+   * last good checkout and the failure is reported as a warning.
+   * @param {object} app app row (needs path)
+   * @param {object} source app_git_source row
+   * @returns {Promise<{ commit: string, warning: string|null }>}
+   */
+  static async prepareForStart(app, source) {
+    if (!this.hasRepo(app.path)) {
+      const { commit } = await this.ensureRepo(app.path, source); // clone is mandatory
+      return { commit, warning: null };
+    }
+
+    // A URL re-bind only updates the DB; re-point origin every start so an
+    // existing checkout never fetches from the previous remote.
+    await this.setRemote(app.path, source.url);
+
+    if (!source.auto_update) {
+      return { commit: await this.currentHead(app.path), warning: null };
+    }
+
+    try {
+      const commit = await this.fetchHead(app.path, source.branch);
+      await this.gitExec(['reset', '--hard', 'FETCH_HEAD'], { cwd: app.path });
+      // -fd only: never -x, which would delete node_modules / platform files.
+      await this.gitExec(['clean', '-fd'], { cwd: app.path });
+      return { commit, warning: null };
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      return { commit: await this.currentHead(app.path), warning: `fetch failed: ${message}` };
+    }
+  }
+
+  /**
    * Pull the app's branch into place and rebuild/restart when needed.
    * The DB claim is the single-flight guard, so this is safe across cluster
    * workers: a second concurrent caller returns `busy` without touching files.

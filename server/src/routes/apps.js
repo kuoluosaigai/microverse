@@ -165,6 +165,12 @@ router.delete('/apps/:id', async (req, res, next) => {
         error: { message: error.message }
       });
     }
+    if (error.message === 'Update in progress') {
+      return res.status(409).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
     if (error.message.includes('Cannot delete running app') || error.message.includes('Refusing to delete')) {
       return res.status(400).json({
         success: false,
@@ -187,6 +193,12 @@ router.post('/apps/:id/start', async (req, res, next) => {
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    if (error.message === 'Update in progress') {
+      return res.status(409).json({
         success: false,
         error: { message: error.message }
       });
@@ -254,6 +266,12 @@ router.post('/apps/:id/restart', async (req, res, next) => {
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    if (error.message === 'Update in progress') {
+      return res.status(409).json({
         success: false,
         error: { message: error.message }
       });
