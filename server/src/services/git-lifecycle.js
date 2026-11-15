@@ -429,6 +429,31 @@ class GitLifecycle {
   }
 
   /**
+   * Fire-and-forget sync used by the webhook handler: a webhook response must
+   * never wait on (or fail because of) the pull. Resolves the app/source itself
+   * and swallows every failure, including lookup errors, so nothing can escape
+   * to the caller as an unhandled rejection.
+   * @param {number} appId
+   * @returns {void}
+   */
+  static triggerBackgroundSync(appId) {
+    const lifecycle = this;
+    (async () => {
+      let label = `#${appId}`;
+      try {
+        const app = await require('./app-manager').getAppById(appId);
+        label = app.name;
+        const source = await db().queries.getAppGitSource(appId);
+        if (!source) return;
+        await lifecycle.sync(app, { reason: 'webhook' });
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        console.error(`[git] background sync failed for ${label}: ${message}`);
+      }
+    })();
+  }
+
+  /**
    * Alias used by route/background callers: pull === sync.
    * @param {object} app
    * @returns {Promise<ReturnType<typeof GitLifecycle.sync>>}

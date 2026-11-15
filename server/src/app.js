@@ -3,6 +3,8 @@ const cors = require('cors');
 const config = require('./config');
 const { errorHandler, notFoundHandler } = require('./middleware/error-handler');
 const routes = require('./routes');
+const webhookRouter = require('./routes/webhooks');
+const { webhookLimiter } = require('./middleware/rate-limit');
 const swaggerUi = require('swagger-ui-express');
 const openApiSpec = require('./docs');
 const session = require('express-session');
@@ -36,7 +38,18 @@ const sessionStore = new SQLiteStore({ db: new sqlite3.Database(config.session.d
 function createApp() {
   const app = express();
 
+  // Trust exactly one reverse-proxy layer so req.ip / req.protocol reflect the
+  // real client behind the edge nginx (and so X-Forwarded-Proto drives secure
+  // cookies correctly). Set BEFORE any mount that reads req.ip — the webhook
+  // rate limiter below keys on it.
+  app.set('trust proxy', 1);
+
   app.use(cors(config.cors));
+
+  // Public GitHub webhook receiver. MUST be mounted before express.json():
+  // express.raw keeps the exact bytes GitHub signed for HMAC verification.
+  app.use('/api/webhooks', webhookLimiter, express.raw({ type: 'application/json', limit: '2mb' }), webhookRouter);
+
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
@@ -44,10 +57,6 @@ function createApp() {
   if (!config.auth.sessionSecret) {
     console.warn('⚠ SESSION_SECRET not set — using a random ephemeral secret. Sessions will not survive restarts, and under PM2 cluster each worker signs with a different key (intermittent logouts/401s). Set SESSION_SECRET in .env.');
   }
-  // Trust exactly one reverse-proxy layer so req.ip / req.protocol reflect the
-  // real client behind the edge nginx (and so X-Forwarded-Proto drives secure
-  // cookies correctly).
-  app.set('trust proxy', 1);
   const sessionCookieSecure = config.auth.sessionCookieSecure
     || (config.deployment.proxySslEnabled && config.server.nodeEnv === 'production');
   app.use(session({

@@ -17,4 +17,15 @@ const apiLimiter = rateLimit({
   message: { success: false, error: { message: 'Too many requests, slow down' } }
 });
 
-module.exports = { loginLimiter, apiLimiter };
+// Public GitHub webhooks: unauthenticated by design, so the per-IP ceiling is
+// the only abuse control at the HTTP layer (HMAC verification per app is the
+// real gate). 120/min is well above a busy repository's push volume.
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { message: 'Too many webhook requests' } }
+});
+
+module.exports = { loginLimiter, apiLimiter, webhookLimiter };
