@@ -7,6 +7,22 @@ const { isValidAppName } = require('../utils/validate-app-name');
 const fs = require('fs');
 const path = require('path');
 
+// Public shape of an app's git binding, attached to every app object returned
+// by AppManager. The webhook_secret and internal claim bookkeeping stay out.
+function toGitSummary(row) {
+  if (!row) return null;
+  return {
+    url: row.url,
+    branch: row.branch,
+    auto_update: row.auto_update,
+    deployed_commit: row.deployed_commit,
+    remote_commit: row.remote_commit,
+    synced_at: row.synced_at,
+    last_status: row.last_status,
+    last_error: row.last_error
+  };
+}
+
 /**
  * Application Manager Service
  * Handles application lifecycle management
@@ -56,18 +72,26 @@ class AppManager {
    * Get all applications
    */
   static async getAllApps() {
-    return queries.getAllApps();
+    const [apps, sources] = await Promise.all([
+      queries.getAllApps(),
+      queries.getAllAppGitSources()
+    ]);
+    const sourceByAppId = new Map(sources.map(source => [source.app_id, source]));
+    return apps.map(app => ({ ...app, git: toGitSummary(sourceByAppId.get(app.id)) }));
   }
 
   /**
    * Get application by ID
    */
   static async getAppById(id) {
-    const app = await queries.getAppById(id);
+    const [app, source] = await Promise.all([
+      queries.getAppById(id),
+      queries.getAppGitSource(id)
+    ]);
     if (!app) {
       throw new Error('App not found');
     }
-    return app;
+    return { ...app, git: toGitSummary(source) };
   }
 
   /**

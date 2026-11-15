@@ -176,6 +176,98 @@ const queries = {
     return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
   },
 
+  // Git-source queries (see app_git_source in schema.sql)
+  getAppGitSource: (appId) => dbGet('SELECT * FROM app_git_source WHERE app_id = ?', [appId]),
+
+  getAllAppGitSources: () => dbAll('SELECT * FROM app_git_source'),
+
+  // Bind (or re-bind) the app's source. An omitted webhook_secret keeps the
+  // stored one, so a re-bind that only changes url/branch does not rotate it.
+  upsertAppGitSource: ({ appId, url, branch, autoUpdate, webhookSecret }) => dbRun(
+    `INSERT INTO app_git_source (app_id, url, branch, auto_update, webhook_secret)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(app_id) DO UPDATE SET
+       url = excluded.url,
+       branch = excluded.branch,
+       auto_update = excluded.auto_update,
+       webhook_secret = COALESCE(excluded.webhook_secret, app_git_source.webhook_secret),
+       updated_at = CURRENT_TIMESTAMP`,
+    [appId, url, branch || 'main', autoUpdate === undefined ? 1 : (autoUpdate ? 1 : 0), webhookSecret ?? null]
+  ),
+
+  setGitRemoteCommit: (appId, sha) => dbRun(
+    'UPDATE app_git_source SET remote_commit = ?, updated_at = CURRENT_TIMESTAMP WHERE app_id = ?',
+    [sha, appId]
+  ),
+
+  setGitAutoUpdate: (appId, enabled) => dbRun(
+    'UPDATE app_git_source SET auto_update = ?, updated_at = CURRENT_TIMESTAMP WHERE app_id = ?',
+    [enabled ? 1 : 0, appId]
+  ),
+
+  // Drop deployment progress (new repo/branch binding) but keep the binding.
+  resetGitSourceProgress: (appId) => dbRun(
+    `UPDATE app_git_source SET
+       deployed_commit = NULL,
+       remote_commit = NULL,
+       synced_at = NULL,
+       last_status = 'idle',
+       last_error = NULL,
+       sync_started_at = NULL,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE app_id = ?`,
+    [appId]
+  ),
+
+  // Exclusive cross-worker sync claim: succeeds only when no other sync holds
+  // a fresh claim. A claim older than staleMs is considered abandoned (crashed
+  // worker) and may be stolen.
+  claimGitSync: async (appId, staleMs) => {
+    const modifier = `-${Math.max(1, Math.floor(staleMs / 1000))} seconds`;
+    const result = await dbRun(
+      `UPDATE app_git_source
+          SET last_status = 'updating', sync_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE app_id = ?
+          AND (last_status != 'updating'
+               OR sync_started_at IS NULL
+               OR sync_started_at < datetime('now', ?))`,
+      [appId, modifier]
+    );
+    return result.changes > 0;
+  },
+
+  // Record the outcome of a claimed sync and release the claim. Omitted commit
+  // values keep their stored value; synced_at only advances on success.
+  finishGitSync: (appId, { status, error, deployedCommit, remoteCommit } = {}) => dbRun(
+    `UPDATE app_git_source SET
+       last_status = ?,
+       last_error = ?,
+       deployed_commit = COALESCE(?, deployed_commit),
+       remote_commit = COALESCE(?, remote_commit),
+       synced_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE synced_at END,
+       sync_started_at = NULL,
+       updated_at = CURRENT_TIMESTAMP
+     WHERE app_id = ?`,
+    [status, error ?? null, deployedCommit ?? null, remoteCommit ?? null, deployedCommit ?? null, appId]
+  ),
+
+  // Advertise a new remote commit without clobbering a fresh in-flight sync.
+  // staleMs is config.git.staleSyncMs when called from the webhook handler.
+  markGitUpdateAvailable: (appId, staleMs = 30 * 60 * 1000) => {
+    const modifier = `-${Math.max(1, Math.floor(staleMs / 1000))} seconds`;
+    return dbRun(
+      `UPDATE app_git_source
+          SET last_status = 'update_available', updated_at = CURRENT_TIMESTAMP
+        WHERE app_id = ?
+          AND (last_status != 'updating'
+               OR sync_started_at IS NULL
+               OR sync_started_at < datetime('now', ?))`,
+      [appId, modifier]
+    );
+  },
+
+  deleteAppGitSource: (appId) => dbRun('DELETE FROM app_git_source WHERE app_id = ?', [appId]),
+
   // npm install/build fingerprint state (see app_deploy_state in schema.sql)
   getAppDeployState: (appId) => dbGet(
     'SELECT install_fp, build_fp FROM app_deploy_state WHERE app_id = ?',
@@ -270,5 +362,6 @@ module.exports = {
   queries,
   dbReady,
   dbAll,
+  dbRun,
   applyMigrations
 };

@@ -106,3 +106,24 @@ CREATE TABLE IF NOT EXISTS metrics (
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_app_ts ON metrics(app_name, ts);
+
+-- Git-backed source bindings: one optional source per app. Kept separate from
+-- apps so the binding (and its webhook secret) is additive and cascades with
+-- the app row. `last_status` doubles as the cross-worker sync lock: a row in
+-- 'updating' with a fresh sync_started_at is claimed; see queries.claimGitSync.
+CREATE TABLE IF NOT EXISTS app_git_source (
+  app_id INTEGER PRIMARY KEY,
+  url TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  auto_update INTEGER NOT NULL DEFAULT 1,
+  webhook_secret TEXT NOT NULL,
+  deployed_commit TEXT,
+  remote_commit TEXT,
+  synced_at DATETIME,
+  last_status TEXT NOT NULL DEFAULT 'idle',
+  last_error TEXT,
+  sync_started_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
