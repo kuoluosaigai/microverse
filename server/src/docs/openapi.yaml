@@ -30,6 +30,10 @@ tags:
     description: File listing, upload, and environment variables
   - name: Logs
     description: Log streaming
+  - name: Git
+    description: Git-source binding, update checks, and pulls (admin-only)
+  - name: Webhooks
+    description: Public GitHub push receiver (per-app HMAC, no session)
 paths:
   /health:
     get:
@@ -225,7 +229,13 @@ paths:
       tags: [Applications]
       summary: Delete an application (running-check reconciled against PM2; a dead-but-"running" app is cleaned up)
       operationId: deleteApp
-      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      parameters:
+        - { $ref: '#/components/parameters/AppId' }
+        - name: deleteFiles
+          in: query
+          required: false
+          description: Also remove the app's deploy directory (including any Git checkout). Default false keeps the files on disk.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Deleted
@@ -239,6 +249,7 @@ paths:
                     type: object
                     properties:
                       message: { type: string, example: "App deleted successfully" }
+                      filesDeleted: { type: boolean, example: false }
         '400':
           description: Cannot delete a running app
           content:
@@ -351,7 +362,7 @@ paths:
   /apps/{id}/files:
     get:
       tags: [Files & Env]
-      summary: List files in an application's deploy directory
+      summary: List files in an application's deploy directory (`.git` is hidden)
       operationId: listFiles
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
@@ -457,11 +468,174 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/git:
+    get:
+      tags: [Git]
+      summary: Get the app's Git source binding (includes webhook URL and secret)
+      description: Admin-only. Unlike the secret-free `git` summary on app responses, this shape exposes the per-app webhook secret.
+      operationId: getAppGitSource
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Git source binding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AppGitSource' }
+        '404':
+          description: App not found or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [Git]
+      summary: Bind or re-bind the app's Git source
+      description: A first bind generates the webhook secret; a re-bind preserves it. Changing the URL or branch resets deployment progress.
+      operationId: putAppGitSource
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitBindInput' }
+      responses:
+        '200':
+          description: Saved binding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AppGitSource' }
+        '400':
+          description: Missing/invalid Git URL or branch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Update in progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Git]
+      summary: Unbind the Git source (app row, directory, and files are kept)
+      operationId: deleteAppGitSource
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Unbound
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+        '404':
+          description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Update in progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/git/secret:
+    post:
+      tags: [Git]
+      summary: Rotate the per-app webhook secret
+      description: The binding, deployed commit, and deployment progress are preserved. The previous secret stops working immediately.
+      operationId: rotateAppGitSecret
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Updated binding with the new secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/AppGitSource' }
+        '404':
+          description: App not found or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/git/check:
+    post:
+      tags: [Git]
+      summary: Compare the deployed commit with the remote branch head
+      description: Uses `git ls-remote` only — no worktree changes. A client-side git failure (bad URL/branch/credentials) is a 400.
+      operationId: checkAppGitSource
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Comparison result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/GitCheckResult' }
+        '400':
+          description: Cannot reach the remote (git error)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/git/pull:
+    post:
+      tags: [Git]
+      summary: Pull the branch, rebuild npm apps, and restart a running app
+      description: Synchronous — the DB claim is the single-flight guard, so a concurrent pull returns 409 rather than racing the working tree. A fetch/build/restart failure returns 400 with the worktree rolled back to the previous commit (a restart-only failure keeps the new commit).
+      operationId: pullAppGitSource
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Pull completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/GitPullResult' }
+        '400':
+          description: Pull failed (fetch/build/restart); see error.message
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: App not found or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Update already in progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /apps/{id}/backup:
     get:
       tags: [Applications]
       operationId: backupApp
-      summary: Download a backup zip of an app
+      summary: Download a backup zip of an app (files + manifest; `.git` excluded)
       parameters:
         - name: id
           in: path
@@ -504,6 +678,7 @@ paths:
     post:
       tags: [Files & Env]
       summary: Upload files (multipart). ZIPs auto-extract with zip-slip guard.
+      description: Git-source apps reject uploads (400) — the repository owns the app directory.
       operationId: uploadFiles
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       requestBody:
@@ -620,6 +795,72 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /webhooks/github/{appId}:
+    post:
+      tags: [Webhooks]
+      summary: Public GitHub push webhook (HMAC-SHA256 authenticated per app)
+      description: |
+        Mounted before `express.json()` and reads the raw body (`application/json`, max 2MB).
+        Authenticated only by `X-Hub-Signature-256` over the exact bytes using the app's
+        webhook secret (no session). Only `push` events to the bound branch of the bound
+        repository trigger a sync; with `auto_update` off, the remote commit is recorded and
+        `last_status` becomes `update_available`. Rate-limited to 120 requests/min/IP.
+      operationId: githubWebhook
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Application ID encoded in the payload URL
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Raw GitHub push payload (or ping payload).
+      responses:
+        '200':
+          description: Ping acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        '202':
+          description: Accepted — sync queued, update recorded, or event ignored (non-matching branch/repository)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  message: { type: string, example: "update queued" }
+                  ignored: { type: boolean, example: true }
+        '204':
+          description: Non-push event acknowledged and dropped
+        '400':
+          description: Malformed JSON payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Missing/invalid X-Hub-Signature-256
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Unknown app or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429':
+          description: Rate limited (120/min/IP)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 components:
   securitySchemes:
     sessionAuth:
@@ -659,6 +900,8 @@ components:
             cpu: { type: number, description: "CPU %" }
             memory: { type: integer, description: "bytes" }
             uptimeMs: { type: integer, description: "uptime in ms" }
+        git:
+          $ref: '#/components/schemas/GitSummary'
         created_at: { type: string, example: "2026-07-12 03:25:59" }
         updated_at: { type: string, example: "2026-07-12 03:26:23" }
     AppCreateInput:
@@ -670,6 +913,72 @@ components:
           type: string
           enum: [npm, http-server, nginx]
           example: "npm"
+        git_url:
+          type: string
+          description: Optional Git repository URL; when present the source is bound in the same call.
+          example: "https://github.com/owner/repo"
+        git_branch:
+          type: string
+          default: main
+          description: Branch to deploy (only meaningful with git_url).
+        git_auto_update:
+          type: boolean
+          default: true
+          description: Pull on start and on webhook pushes (only meaningful with git_url).
+    GitSummary:
+      type: object
+      nullable: true
+      description: Secret-free Git binding attached to app responses (null when the app is not Git-sourced).
+      properties:
+        url: { type: string, example: "https://github.com/owner/repo" }
+        branch: { type: string, example: "main" }
+        auto_update: { type: integer, enum: [0, 1], example: 1 }
+        deployed_commit: { type: string, nullable: true, example: "3f2a9c1..." }
+        remote_commit: { type: string, nullable: true, example: "9b1e0d4..." }
+        synced_at: { type: string, nullable: true, example: "2026-07-12 03:26:23" }
+        last_status:
+          type: string
+          enum: [idle, updating, success, failed, update_available]
+          example: "success"
+        last_error: { type: string, nullable: true }
+    AppGitSource:
+      type: object
+      description: Admin-facing Git binding. Unlike `GitSummary`, includes the webhook URL and secret.
+      properties:
+        url: { type: string, example: "https://github.com/owner/repo" }
+        branch: { type: string, example: "main" }
+        autoUpdate: { type: boolean, example: true }
+        webhookUrl: { type: string, example: "https://apps.example.com/api/webhooks/github/7" }
+        webhookSecret: { type: string, example: "0123456789abcdef..." }
+        deployedCommit: { type: string, nullable: true }
+        remoteCommit: { type: string, nullable: true }
+        syncedAt: { type: string, nullable: true }
+        lastStatus:
+          type: string
+          enum: [idle, updating, success, failed, update_available]
+          example: "success"
+        lastError: { type: string, nullable: true }
+    GitBindInput:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, example: "https://github.com/owner/repo" }
+        branch: { type: string, example: "main", description: Defaults to main on first bind; omitted keeps the current branch." }
+        autoUpdate: { type: boolean, description: "Omitted keeps the current value; defaults to true on first bind." }
+    GitCheckResult:
+      type: object
+      properties:
+        remoteCommit: { type: string, nullable: true, description: null when the branch does not exist on the remote }
+        deployedCommit: { type: string, nullable: true }
+        upToDate: { type: boolean, example: false }
+    GitPullResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success, up-to-date]
+          example: "success"
+        deployedCommit: { type: string, nullable: true }
     EnvEntry:
       type: object
       required: [key]

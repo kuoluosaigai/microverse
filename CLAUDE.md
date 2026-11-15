@@ -98,6 +98,7 @@ Three core orchestration services in `server/src/services/`, plus specialized se
 Specialized services:
 - **NpmLifecycle** - npm apps: fingerprint-gated `npm install` (incl. devDependencies) + optional `npm run build` — content hash of `package.json`/lockfile gates install, a stat-based app-tree hash gates build, fingerprints persist in the `app_deploy_state` table so a plain stop→start skips both; resolves user env vars (`app_env` table) into the PM2 ecosystem env.
 - **NginxLifecycle** - `nginx` deploy type: generates per-app nginx server block (pid/log redirected into app dir), runs `nginx -t` preflight, managed by PM2 with `interpreter: 'none'` + `daemon off;`.
+- **GitLifecycle** - Git-source deploys (`app_git_source` table): clones/fetches the bound repo into the app dir (depth-1 fetch, `reset --hard`, `clean -fd` — never `-x`), runs on start / manual pull / signed GitHub push webhook, and rolls the worktree + deploy state back to the previous HEAD when fetch or npm build fails. Single-flight is a DB claim (`claimGitSync` / `finishGitSync`, stale after `GIT_STALE_SYNC_MS`), so concurrent pulls from cluster workers return `busy` instead of racing the working tree. npm apps are rebuilt via `NpmLifecycle.ensureBuilt`; only a running npm app is restarted after a sync.
 - **LogManager** - SSE log streaming: resolves PM2 log paths per deploy_type, tails with `fs.watch` (byte offset, line buffer, rotation reset). nginx apps tail `nginx-access.log`/`nginx-error.log`.
 - **MetricsSampler** - Resource monitoring: 10s/tick `pm2 jlist` from ONE cluster worker (`NODE_APP_INSTANCE=0`, gated in server.js); samples persist to the shared SQLite `metrics` table (pruned to newest 180/app) so every worker serves identical reads.
 - **AuthManager** - Single-admin auth: bcryptjs verify, seeds admin from env on boot.
@@ -105,7 +106,7 @@ Specialized services:
 - **ProxyManager** - Platform-managed nginx edge reverse proxy (opt-in via `PROXY_ENABLED`): renders subdomain + root-default routes into `PROXY_CONF_FILE`, `nginx -t` then `-s reload`, rolls back on failure. Regenerated on app start/stop/delete and on boot.
 - **UpdateManager / SelfUpdater** - Platform self-update (opt-in via `SELF_UPDATE_ENABLED`; Linux + PM2 only). `UpdateManager` does the version check (`git ls-remote` + 10-min cache), preflight, atomic `data/update.lock` claim, and detached spawn; `scripts/self-update.js` does DB `VACUUM INTO` backup → ff-only pull → `npm install --include=dev` → staged client build (`dist.next` swap) → `pm2 reload` → health poll, with code/dist rollback and incomplete-update repair detection. Additive schema only; the DB is backed up but never auto-restored.
 
-**Call hierarchy**: Routes → DeployManager → AppManager + ProcessManager (+ NpmLifecycle / NginxLifecycle) → Database/PM2
+**Call hierarchy**: Routes → DeployManager → AppManager + ProcessManager (+ NpmLifecycle / NginxLifecycle / GitLifecycle) → Database/PM2
 
 ### Cross-Platform Considerations
 
@@ -152,6 +153,7 @@ Config hierarchy: `server/src/config/index.js`
 - PM2: PM2_INSTANCE_NAME (microverse-server)
 - Admin auth: ADMIN_USERNAME, ADMIN_PASSWORD (seeded on first boot only, race-free via `ON CONFLICT DO NOTHING`; to reset, delete the `users` row + restart), SESSION_SECRET (REQUIRED under NODE_ENV=production — config validation throws at boot; otherwise each cluster worker signs with a different key → intermittent 401), SESSION_COOKIE_SECURE (follows PROXY_SSL_ENABLED), SESSION_DB_PATH (data/sessions.sqlite; shared sqlite session store so sessions survive across cluster workers + restarts)
 - Nginx: NGINX_BIN (default `nginx` = PATH; used by BOTH the nginx deploy type AND the reverse-proxy reload)
+- Git sources: GIT_BIN (default `git` = PATH), GIT_TIMEOUT_MS (per-command timeout, 120000), GIT_STALE_SYNC_MS (a sync claim older than this is treated as abandoned, 1800000)
 - Reverse proxy (opt-in edge, see ProxyManager): PROXY_ENABLED, PROXY_CONF_FILE, PROXY_BASE_DOMAIN, PROXY_SSL_ENABLED + PROXY_SSL_CERT/KEY paths (v1 does NOT issue certs — only emits the server-block shape; run certbot yourself then fill paths)
 - Self-update (opt-in, see UpdateManager/SelfUpdater): SELF_UPDATE_ENABLED (default false), SELF_UPDATE_REF (default main), SELF_UPDATE_REMOTE (default origin). Requires a git checkout and `PM2_INSTANCE_NAME` online; non-git / Windows / dirty-tree / shallow-clone deployments are refused.
 
@@ -189,18 +191,23 @@ Key endpoints:
 - `GET /api/config` - Public client config (upload limits, app URL template, proxy/base-domain fields)
 - `GET /api/apps` - List all apps (response includes per-app `metrics`)
 - `GET /api/apps/:id` - Get app by ID
-- `POST /api/apps` - Create app (body: { name, deploy_type }; name must match `^[A-Za-z0-9_-]{1,64}$`)
-- `DELETE /api/apps/:id` - Delete app (must be stopped first; cleans PM2 orphan)
+- `POST /api/apps` - Create app (body: { name, deploy_type }; name must match `^[A-Za-z0-9_-]{1,64}$`; optional `git_url`, `git_branch` (default `main`), `git_auto_update` (default `true`) bind a Git source in the same call)
+- `DELETE /api/apps/:id` - Delete app (must be stopped first; cleans PM2 orphan). `?deleteFiles=true` also removes the app directory (default `false` keeps it); response reports `filesDeleted`
 - `POST /api/apps/:id/start` - Start app (assigns port, launches PM2)
 - `POST /api/apps/:id/stop` - Stop app
 - `POST /api/apps/:id/restart` - Restart app
 - `POST /api/apps/:id/sync` - Sync DB status with PM2 actual status
-- `GET /api/apps/:id/files` - List deployed files
+- `GET /api/apps/:id/files` - List deployed files (`.git` is hidden)
+- `GET|PUT|DELETE /api/apps/:id/git` - Get (with webhook URL + secret) / bind or re-bind (body: { url, branch?, autoUpdate? }) / unbind the Git source. Unbind keeps app files; PUT/DELETE return 409 while a sync is in progress
+- `POST /api/apps/:id/git/secret` - Rotate the per-app webhook secret (binding + deployment progress preserved)
+- `POST /api/apps/:id/git/check` - Compare deployed commit with the remote branch head (no worktree changes)
+- `POST /api/apps/:id/git/pull` - Fetch/sync the branch, rebuild npm apps, and restart a running app; synchronous (400 on failure, 409 when a sync is already running)
+- `POST /api/webhooks/github/:appId` - Public GitHub push webhook (HMAC-SHA256 over the raw body via `X-Hub-Signature-256`, 2MB JSON limit, 120/min/IP; no session). `ping` → 200, non-push → 204, accepted/ignored → 202, bad signature → 401, unknown app/unbound source → 404
 - `GET /api/apps/:id/logs/stream` - SSE stream of an app's logs (history then live; `?lines=N`)
 - `GET /api/apps/:id/metrics` - Per-app resource metrics history (CPU/memory samples)
 - `GET|PUT /api/apps/:id/env` - Get/set user env vars (baked at launch; restart to apply)
-- `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard; single top-level folder auto-flattened; a zip upload replaces prior user content — stale files removed, platform files like `node_modules`/nginx conf preserved)
-- `GET /api/apps/:id/backup` - Download per-app backup zip (files + manifest)
+- `POST /api/apps/:id/upload` - Upload files (multipart field `files`; ZIPs auto-extract with zip-slip guard; single top-level folder auto-flattened; a zip upload replaces prior user content — stale files removed, platform files like `node_modules`/`.git`/nginx conf preserved). Git-source apps reject uploads (400) — repo content owns the directory
+- `GET /api/apps/:id/backup` - Download per-app backup zip (files + manifest; `.git` excluded)
 - `POST /api/apps/restore` - Restore app from backup zip (validates first, rolls back on failure, 400 on name clash)
 - `PUT|DELETE /api/apps/:id/default` - Mark/unmark an app as the root-domain default (single-default; regenerates edge proxy)
 - `POST /api/auth/login` | `POST /api/auth/logout` | `GET /api/auth/me` - Single-admin session
@@ -208,7 +215,7 @@ Key endpoints:
 - `POST /api/system/update` - Start a self-update (202; 400 preflight failure; 409 already running)
 - `GET /api/system/update/status` - Update state + bounded log tail
 
-Auth: `requireAuth` gates `/api/apps*` and `/api/system/*`; `/health`, `/config`, `/auth/login` are public. Rate-limited: login 5/15min/IP, API 100/min/IP (SSE exempt). Interactive API docs: swagger-ui-express at `/api-docs`; spec at `/openapi.json`.
+Auth: `requireAuth` gates `/api/apps*` and `/api/system/*`; `/health`, `/config`, `/auth/login`, and `/api/webhooks/github/:appId` are public (the webhook authenticates per-app via its own HMAC signature). Rate-limited: login 5/15min/IP, API 100/min/IP (SSE exempt), webhook 120/min/IP. Interactive API docs: swagger-ui-express at `/api-docs`; spec at `/openapi.json`.
 
 ### Deployment Types
 
@@ -222,6 +229,23 @@ Each type has different validation rules in `AppManager.validateAppDeployment()`
 ### Platform-managed reverse proxy (cross-cutting, not a deploy type)
 
 Opt-in via `PROXY_ENABLED`. The platform writes one nginx edge conf (`PROXY_CONF_FILE`) mapping each **running** app's subdomain (`<app>.<base-domain>`) to its port, plus an optional root-domain default app (`apps.is_default`). Regenerated on app start/stop/delete and on boot; `nginx -t` then `-s reload`, rolled back on failure. v1 does NOT issue SSL certs — it only emits the server-block shape; provision certs yourself (certbot) and fill `PROXY_SSL_*` paths.
+
+### Git-source apps (cross-cutting, not a deploy type)
+
+Any deploy type can additionally be bound to a Git repository (`app_git_source`; secret-free summary attached to every app response as `git`, `null` when unbound). The repo content owns the app directory: uploads are rejected, `.git` is hidden from file listings and excluded from backups, and a zip replacement preserves `.git` (like `node_modules`).
+
+- **First start clones** the repo (depth-1 fetch of the bound branch); a failed clone fails the start. An existing checkout re-points `origin` at the stored URL on every start, so a URL re-bind is honored.
+- **`auto_update`** (default on): start fetches and hard-resets to the remote head (fetch failure is a non-fatal warning — the app starts on the last good checkout). When off, start uses the local HEAD and a webhook only records `remote_commit` + `last_status=update_available`.
+- **Sync** (manual pull or webhook-triggered background sync) writes `last_status` `updating` → `success` / `failed`, tracks `deployed_commit`/`remote_commit`, and rolls back the worktree to the previous HEAD if fetch/build fails (a restart-only failure keeps the new commit). A running npm app is rebuilt and restarted; static apps serve from disk.
+- **Branches/URLs:** a PUT that changes URL or branch resets deployment progress. Bind/pull/unbind return 409 while a non-stale sync claim is active.
+- Private repos are NOT supported (no credential storage); the repo must be publicly cloneable.
+
+#### GitHub webhook setup
+
+1. Bind the source in the app's Git dialog; copy **Webhook URL** (`<public-origin>/api/webhooks/github/<appId>`) and **Webhook secret**.
+2. GitHub repo → Settings → Webhooks → Add webhook: paste the payload URL, set Content type to `application/json`, paste the secret, and select **push events only**.
+3. The platform must be publicly reachable from GitHub. When the platform nginx edge is in front, `/api/webhooks/` must be proxied to the backend port (5000), not to an app port, and the raw body/content type must be preserved.
+4. Only pushes to the bound branch of the bound repository trigger a sync; other deliveries return 202 and are ignored. With `auto_update` off, the webhook never pulls — use **Pull update** in the Git dialog.
 
 ### Error Handling
 
@@ -242,12 +266,12 @@ Services throw descriptive errors; routes catch and map to appropriate HTTP stat
 **Injecting environment variables**: `DeployManager.deployApp` calls `NpmLifecycle.resolveEnv(appId, port)` and passes `{ env }` to `ProcessManager.startProcess(app, { env })`, which writes it into the PM2 ecosystem config. User env vars live in the `app_env` table, edited via `GET/PUT /api/apps/:id/env` (UI: `EnvModal`). Env is baked at launch — changes require a restart.
 
 **Adding new API endpoint**:
-1. Add the route in the matching sub-router under `server/src/routes/` (`system.js` public health/config, `auth.js` login/me/logout, `apps.js` all `/apps*`, `proxy.js` proxy-routes/domains). `index.js` only composes them — mount order is load-bearing: public routers → `requireAuth` → `apiLimiter` → protected routers.
+1. Add the route in the matching sub-router under `server/src/routes/` (`system.js` public health/config, `auth.js` login/me/logout, `apps.js` core `/apps*`, `git.js` `/apps/:id/git*`, `webhooks.js` public GitHub receiver, `proxy.js` proxy-routes/domains). `index.js` only composes them — mount order is load-bearing: public routers → `requireAuth` → `apiLimiter` → protected routers; the webhook is mounted in `app.js` before `express.json()` with `express.raw()`.
 2. Use async/await for all database operations
 3. Map service errors to HTTP status codes
 
 **Database schema changes**:
-1. Modify `schema.sql` (use `CREATE TABLE IF NOT EXISTS` for additive tables like `app_env` — no DB deletion needed; the server re-runs the schema on every start)
+1. Modify `schema.sql` (use `CREATE TABLE IF NOT EXISTS` for additive tables like `app_env` / `app_git_source` — no DB deletion needed; the server re-runs the schema on every start)
 2. For breaking changes only: delete `data/microverse.sqlite` to recreate
 3. Update query functions in `server/src/db/index.js`
 
@@ -284,3 +308,5 @@ curl http://localhost:3000  # Or assigned port
 - All paths must use `path` module for cross-platform compatibility.
 - Apps directory (`apps/*`) and database files (`*.sqlite`) are gitignored.
 - Frontend proxy only works in development; production needs different setup.
+- Git-source apps reject uploads; `.git` is preserved by zip replacement, hidden from listings, and excluded from backups. Never run `git clean -x` in an app dir (it would delete `node_modules`).
+- The webhook is session-less: it is authenticated only by the per-app HMAC signature, so it must be mounted before `express.json()` with the raw body and must never trust parsed JSON before verifying.
