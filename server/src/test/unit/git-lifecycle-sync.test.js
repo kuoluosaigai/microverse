@@ -278,6 +278,89 @@ test('pull delegates to sync', async () => {
   assert.equal(synced[0].app, app);
 });
 
+test('a failed first sync leaves deployed_commit null so a retry rebuilds', async () => {
+  const name = 'sync-first-fail';
+  const src = path.join(tmp, `${name}-src`);
+  await makeRepo(src);
+  await commitTo(src, 'two', 'two');
+  const newSha = await GitLifecycle.currentHead(src);
+
+  const created = await AppManager.createApp(name, 'npm');
+  createdAppIds.push(created.id);
+  const appPath = path.join(tmp, `${name}-app`);
+  await queries.updateApp({ id: created.id, path: appPath });
+  await queries.upsertAppGitSource({
+    appId: created.id,
+    url: fileUrl(src),
+    branch: 'main',
+    webhookSecret: 'test-secret'
+  });
+  const app = await AppManager.getAppById(created.id);
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  mock.method(ProcessManager, 'restartProcess', async () => {});
+  let builds = 0;
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {
+    builds += 1;
+    if (builds === 1) throw new Error('build failed: boom');
+  });
+
+  // First sync: the repo is cloned at newSha, prevSha === newSha, and the build
+  // fails. Recording newSha as deployed would brand a never-built tree "good".
+  const first = await GitLifecycle.sync(app);
+  assert.equal(first.status, 'failed');
+  assert.equal(first.deployedCommit, null);
+  // One primary build attempt plus the best-effort rollback rebuild.
+  assert.equal(builds, 2);
+
+  let source = await queries.getAppGitSource(app.id);
+  assert.equal(source.deployed_commit, null);
+  assert.equal(source.last_status, 'failed');
+  assert.match(source.last_error, /boom/);
+  assert.equal(source.sync_started_at, null);
+
+  // Same remote SHA, but deployed_commit is still NULL -> must rebuild, not
+  // report up-to-date off the failed attempt.
+  const second = await GitLifecycle.sync(app);
+  assert.equal(second.status, 'success');
+  assert.equal(second.deployedCommit, newSha);
+  assert.equal(builds, 3);
+
+  source = await queries.getAppGitSource(app.id);
+  assert.equal(source.deployed_commit, newSha);
+  assert.equal(source.last_status, 'success');
+  assert.equal(fs.readFileSync(path.join(appPath, 'a.txt'), 'utf8'), 'two');
+});
+
+test('sync follows a re-bound URL instead of the checkout\'s old origin', async () => {
+  const { app, src, appPath } = await makeGitApp('sync-rebind');
+
+  // A second remote with different content.
+  const srcB = path.join(tmp, 'sync-rebind-srcB');
+  await makeRepo(srcB);
+  await commitTo(srcB, 'bee', 'bee');
+  const shaB = await GitLifecycle.currentHead(srcB);
+  const shaA = await GitLifecycle.currentHead(src);
+  assert.notEqual(shaA, shaB);
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  mock.method(ProcessManager, 'restartProcess', async () => {});
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {});
+
+  // Task 8's URL re-bind updates the DB only; the checkout still has origin A.
+  await queries.upsertAppGitSource({ appId: app.id, url: fileUrl(srcB), branch: 'main' });
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.deployedCommit, shaB);
+  assert.equal(fs.readFileSync(path.join(appPath, 'a.txt'), 'utf8'), 'bee');
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.deployed_commit, shaB);
+  assert.equal(source.last_status, 'success');
+});
+
 test('sync coalesces a webhook commit that landed mid-build (bounded retries)', async () => {
   const { app, src } = await makeGitApp('sync-coalesce');
 

@@ -3,9 +3,15 @@ const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
-const { queries } = require('../db');
-const ProcessManager = require('./process-manager');
-const NpmLifecycle = require('./npm-lifecycle');
+
+// DB / PM2 / npm services are required lazily inside the methods that use them.
+// Requiring ../db at module load opens the SQLite connection and logs progress
+// to stdout, which would corrupt the node test runner's IPC stream for files
+// that only exercise the pure git primitives (git-lifecycle-repo.test.js).
+// Accessors keep the dependency surface explicit and cheap (require is cached).
+function db() { return require('../db'); }
+function processManager() { return require('./process-manager'); }
+function npmLifecycle() { return require('./npm-lifecycle'); }
 
 const execFilePromise = util.promisify(execFile);
 
@@ -107,6 +113,29 @@ class GitLifecycle {
   }
 
   /**
+   * Point `origin` at url (idempotent: set-url when origin exists, add when
+   * not). Needed before every fetch because a URL re-bind only updates the DB —
+   * an existing checkout would otherwise keep fetching the previous remote.
+   * @param {string} appPath
+   * @param {string} url
+   */
+  static async setRemote(appPath, url) {
+    this.assertSafeArg(url, 'url');
+    let hasOrigin = false;
+    try {
+      await this.gitExec(['remote', 'get-url', 'origin'], { cwd: appPath });
+      hasOrigin = true;
+    } catch (_err) {
+      // No origin configured yet.
+    }
+    if (hasOrigin) {
+      await this.gitExec(['remote', 'set-url', 'origin', url], { cwd: appPath });
+    } else {
+      await this.gitExec(['remote', 'add', 'origin', url], { cwd: appPath });
+    }
+  }
+
+  /**
    * @param {string} appPath
    * @returns {Promise<string>} current HEAD sha
    */
@@ -165,7 +194,7 @@ class GitLifecycle {
    * @returns {Promise<boolean>}
    */
   static async isSyncInProgress(appId) {
-    const source = await queries.getAppGitSource(appId);
+    const source = await db().queries.getAppGitSource(appId);
     if (!source || source.last_status !== 'updating' || !source.sync_started_at) {
       return false;
     }
@@ -192,16 +221,17 @@ class GitLifecycle {
    * workers: a second concurrent caller returns `busy` without touching files.
    *
    * Rollback ordering: any git/build failure restores the previous HEAD and a
-   * best-effort npm rebuild, and records the failure with the OLD commit. A
-   * restart failure is different — the new files are already valid, so it keeps
-   * the new commit and only reports failed (no rollback).
+   * best-effort npm rebuild, and records the failure with the OLD commit (or
+   * leaves deployed_commit NULL when nothing was ever deployed). A restart
+   * failure is different — the new files are already valid, so it keeps the new
+   * commit and only reports failed (no rollback).
    * @param {object} app app row (needs id, name, path, deploy_type)
    * @param {{ reason?: string }} [options]
    * @returns {Promise<{ status: 'busy'|'up-to-date'|'success'|'failed', deployedCommit: string|null, error: string|null }>}
    */
   static async sync(app, { reason = 'manual' } = {}) {
     void reason; // reserved for callers/logging; outcome is recorded in the DB row
-    const source = await queries.getAppGitSource(app.id);
+    const source = await db().queries.getAppGitSource(app.id);
     if (!source) {
       return { status: 'failed', deployedCommit: null, error: 'Not a Git-sourced app' };
     }
@@ -214,7 +244,7 @@ class GitLifecycle {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       result = await this.syncAttempt(app);
       if (result.status !== 'success') return result;
-      const current = await queries.getAppGitSource(app.id);
+      const current = await db().queries.getAppGitSource(app.id);
       if (!current || !current.remote_commit || current.remote_commit === result.deployedCommit) {
         return result;
       }
@@ -229,7 +259,7 @@ class GitLifecycle {
    * @param {object} app
    */
   static async syncAttempt(app) {
-    if (!(await queries.claimGitSync(app.id, config.git.staleSyncMs))) {
+    if (!(await db().queries.claimGitSync(app.id, config.git.staleSyncMs))) {
       return { status: 'busy', deployedCommit: null, error: null };
     }
 
@@ -240,7 +270,7 @@ class GitLifecycle {
       // plumbing). Release the claim and report it; there is no known-good
       // partial state to reason about here.
       const message = err && err.message ? err.message : String(err);
-      await queries.finishGitSync(app.id, { status: 'failed', error: message }).catch(() => {});
+      await db().queries.finishGitSync(app.id, { status: 'failed', error: message }).catch(() => {});
       return { status: 'failed', deployedCommit: null, error: message };
     }
   }
@@ -250,14 +280,19 @@ class GitLifecycle {
    * @param {object} app
    */
   static async runClaimedSync(app) {
-    const source = await queries.getAppGitSource(app.id);
+    const source = await db().queries.getAppGitSource(app.id);
     if (!source) {
-      await queries.finishGitSync(app.id, { status: 'failed', error: 'Not a Git-sourced app' });
+      await db().queries.finishGitSync(app.id, { status: 'failed', error: 'Not a Git-sourced app' });
       return { status: 'failed', deployedCommit: null, error: 'Not a Git-sourced app' };
     }
 
     // PM2 is the source of truth, but a PM2-less machine must not look stopped.
     const wasRunning = await this.isProcessRunning(app);
+
+    // Whether a deployed state exists to fall back to. When it does not, a
+    // failed first sync must leave deployed_commit NULL so the next attempt
+    // retries the build instead of calling the never-built commit up-to-date.
+    const hadDeployedCommit = !!source.deployed_commit;
 
     let newSha = null;
     let prevSha = null;
@@ -265,12 +300,15 @@ class GitLifecycle {
       if (!this.hasRepo(app.path)) {
         await this.ensureRepo(app.path, source);
       }
+      // A URL re-bind only updates the DB; re-point origin every time so an
+      // existing checkout never fetches from the previous remote.
+      await this.setRemote(app.path, source.url);
       newSha = await this.fetchHead(app.path, source.branch);
 
       if (newSha === source.deployed_commit) {
         // Same commit, but this still proves the remote was reached: record the
         // success (and advance synced_at) via deployedCommit.
-        await queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
+        await db().queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
         return { status: 'up-to-date', deployedCommit: newSha, error: null };
       }
 
@@ -280,7 +318,7 @@ class GitLifecycle {
       await this.gitExec(['clean', '-fd'], { cwd: app.path });
 
       if (app.deploy_type === 'npm') {
-        await NpmLifecycle.ensureBuilt(app.id, app.path);
+        await npmLifecycle().ensureBuilt(app.id, app.path);
       }
     } catch (err) {
       const message = err && err.message ? err.message : String(err);
@@ -295,17 +333,21 @@ class GitLifecycle {
       }
       if (app.deploy_type === 'npm') {
         try {
-          await NpmLifecycle.ensureBuilt(app.id, app.path);
+          await npmLifecycle().ensureBuilt(app.id, app.path);
         } catch (_rebuildErr) {
           // Best-effort only: never mask the original error.
         }
       }
-      await queries.finishGitSync(app.id, {
+      // Never advertise a commit as deployed when there was no prior deployed
+      // state: that would make a same-SHA retry "up-to-date" and skip the
+      // rebuild, silently masking this failure.
+      const recordedCommit = hadDeployedCommit ? rollbackTo : null;
+      await db().queries.finishGitSync(app.id, {
         status: 'failed',
         error: message,
-        deployedCommit: rollbackTo
+        deployedCommit: recordedCommit
       });
-      return { status: 'failed', deployedCommit: rollbackTo, error: message };
+      return { status: 'failed', deployedCommit: recordedCommit, error: message };
     }
 
     // Files are in place. Only a running npm app has anything to reload; static
@@ -313,11 +355,11 @@ class GitLifecycle {
     // mid-build wins (never resurrect a process the operator stopped).
     if (wasRunning && app.deploy_type === 'npm' && (await this.isProcessRunning(app))) {
       try {
-        await ProcessManager.restartProcess(app.name);
+        await processManager().restartProcess(app.name);
       } catch (err) {
         const message = `Restart failed: ${err && err.message ? err.message : String(err)}`;
         // No rollback: the new commit is valid, only the reload failed.
-        await queries.finishGitSync(app.id, {
+        await db().queries.finishGitSync(app.id, {
           status: 'failed',
           error: message,
           deployedCommit: newSha
@@ -326,7 +368,7 @@ class GitLifecycle {
       }
     }
 
-    await queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
+    await db().queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
     return { status: 'success', deployedCommit: newSha, error: null };
   }
 
@@ -337,7 +379,7 @@ class GitLifecycle {
    */
   static async isProcessRunning(app) {
     try {
-      const status = await ProcessManager.getProcessStatus(app.name);
+      const status = await processManager().getProcessStatus(app.name);
       return !!(status && status.exists && status.status === 'online');
     } catch (_err) {
       return app.status === 'running';
