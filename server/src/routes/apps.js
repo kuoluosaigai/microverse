@@ -207,6 +207,7 @@ router.post('/apps/:id/start', async (req, res, next) => {
     // messages plus NpmLifecycle errors (install/build/package.json), which are
     // deterministic client-side failures, not server faults.
     const isClientError =
+      error.status === 400 ||
       error.message.includes('already running') ||
       error.message.includes('nginx binary not found') ||
       error.message.includes('nginx config invalid') ||

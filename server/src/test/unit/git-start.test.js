@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { queries, dbReady } = require('../helpers/setup');
+const { queries, dbReady, adminAgent } = require('../helpers/setup');
 const { dbRun } = require('../../db');
 const AppManager = require('../../services/app-manager');
 const DeployManager = require('../../services/deploy-manager');
@@ -269,4 +269,41 @@ test('prepareForStart honors a re-bound URL on an existing checkout', async () =
 
   assert.equal(prepared.commit, shaB);
   assert.equal(fs.readFileSync(path.join(dst, 'a.txt'), 'utf8'), 'bravo');
+});
+
+test('a post-prepare start failure still releases the claim with the prepared commit', async () => {
+  const app = await makeApp('git-start-build-fail', { deployType: 'npm' });
+  const calls = mockStartEnvironment();
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {
+    throw new Error('build failed: boom');
+  });
+  mock.method(GitLifecycle, 'prepareForStart', async () => ({ commit: 'sha1', warning: null }));
+
+  await assert.rejects(() => DeployManager.deployApp(app.id), /build failed/);
+  assert.equal(calls.start.length, 0);
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'failed');
+  assert.match(source.last_error, /build failed/);
+  assert.equal(source.sync_started_at, null);
+  // Spec-mandated: post-git start failures record the prepared commit.
+  assert.equal(source.deployed_commit, 'sha1');
+});
+
+test('a clone failure maps to HTTP 400 on the start route', async () => {
+  const app = await makeApp('git-start-clone-400');
+  mockStartEnvironment();
+  mock.method(GitLifecycle, 'prepareForStart', async () => {
+    throw new Error('git fetch failed: repository not found');
+  });
+
+  const agent = await adminAgent();
+  const res = await agent.post(`/api/apps/${app.id}/start`).expect(400);
+
+  // Readable, tail-limited git stderr is surfaced to the client.
+  assert.match(res.body.error.message, /git fetch failed/);
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'failed');
+  assert.equal(source.sync_started_at, null);
 });

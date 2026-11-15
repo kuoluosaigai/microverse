@@ -92,9 +92,16 @@ class DeployManager {
         // A fetch failure is not fatal: the last good checkout still starts.
         if (prepared.warning) console.warn(`[git] ${app.name}: ${prepared.warning}`);
       } catch (err) {
-        // Clone (or checkout inspection) failed — nothing safe to launch. Do NOT
-        // release inside the try below: releasing here is the only exit path.
-        await queries.finishGitSync(appId, { status: 'failed', error: err.message });
+        // Clone (or checkout inspection) failed — nothing safe to launch and
+        // the cause is client-facing (bad URL/branch, unreachable repo), not a
+        // server fault. Mark it so the start route maps it to 400 without
+        // string-matching git stderr. Do NOT release inside the try below:
+        // releasing here is the only exit path.
+        if (err && typeof err === 'object') err.status = 400;
+        await queries.finishGitSync(appId, {
+          status: 'failed',
+          error: err && err.message ? err.message : String(err)
+        });
         throw err;
       }
     }
