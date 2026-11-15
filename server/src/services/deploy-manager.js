@@ -106,22 +106,8 @@ class DeployManager {
     // config valid) before launch, so failures surface as clean 400s.
     if (app.deploy_type === 'npm') {
       // install/build run only when their fingerprint changed (or the step never
-      // completed), so a plain stop→start doesn't reinstall + rebuild. Fingerprints
-      // live in app_deploy_state (DB) — zip-replacement cleanup can't erase them.
-      // Post-run fingerprints are stored from the AFTER state because npm may
-      // rewrite the lockfile itself.
-      const state = await queries.getAppDeployState(appId);
-      const mustInstall = NpmLifecycle.needsInstall(app.path, state && state.install_fp);
-      if (mustInstall) {
-        await NpmLifecycle.install(app.path);
-        await queries.setUpDeployState(appId, { installFp: NpmLifecycle.installFingerprint(app.path) });
-      }
-      // Dependency changes (install ran) force a rebuild even if app sources
-      // are untouched; otherwise rebuild only when the source tree fingerprint moved.
-      if (mustInstall || NpmLifecycle.needsBuild(app.path, state && state.build_fp)) {
-        await NpmLifecycle.build(app.path); // no-op when there is no build script
-        await queries.setUpDeployState(appId, { buildFp: NpmLifecycle.buildFingerprint(app.path) });
-      }
+      // completed), so a plain stop→start doesn't reinstall + rebuild.
+      await NpmLifecycle.ensureBuilt(appId, app.path);
       const env = await NpmLifecycle.resolveEnv(appId, app.port);
       await ProcessManager.startProcess(app, { env });
     } else if (app.deploy_type === 'nginx') {

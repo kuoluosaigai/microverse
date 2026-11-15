@@ -118,6 +118,29 @@ class NpmLifecycle {
   }
 
   /**
+   * Fingerprint-gated `npm install` + `npm run build` for one app.
+   * Shared by DeployManager.deployApp (start) and GitLifecycle.sync (pull) so
+   * both honor app_deploy_state; a plain stop→start or a no-op sync does no work.
+   * Post-run fingerprints are stored from the AFTER state because npm may
+   * rewrite the lockfile itself; a dependency change (install ran) forces a
+   * build even when app sources are untouched.
+   * @param {number} appId
+   * @param {string} appPath
+   */
+  static async ensureBuilt(appId, appPath) {
+    const state = await queries.getAppDeployState(appId);
+    const mustInstall = this.needsInstall(appPath, state && state.install_fp);
+    if (mustInstall) {
+      await this.install(appPath);
+      await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
+    }
+    if (mustInstall || this.needsBuild(appPath, state && state.build_fp)) {
+      await this.build(appPath); // no-op when there is no build script
+      await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
+    }
+  }
+
+  /**
    * Run the npm CLI with an argument array (no shell interpolation).
    * Prefers npm's JS entry (npm-cli.js beside the running node binary) so it
    * behaves identically on Windows, where a bare `npm` is a .cmd shim Node
