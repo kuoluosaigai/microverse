@@ -158,6 +158,8 @@
     "lastError": "Last error",
     "notBound": "No Git repository bound. Saving binds this app to the repository.",
     "saveSuccess": "Git source saved",
+    "rebindConfirmTitle": "Switch repository or branch?",
+    "rebindConfirm": "The next start or update switches the worktree to the new repository/branch and overwrites repo-tracked files. Back up first.",
     "pullSuccess": "Update pulled",
     "pullFailed": "Update failed",
     "checkUpToDate": "Already up to date",

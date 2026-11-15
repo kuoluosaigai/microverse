@@ -101,6 +101,7 @@ test('start claims and releases the git source on success', async () => {
   const source = await queries.getAppGitSource(app.id);
   assert.equal(source.last_status, 'success');
   assert.equal(source.deployed_commit, 'sha1');
+  assert.equal(source.last_error, null);
   assert.equal(source.sync_started_at, null);
 });
 
@@ -136,7 +137,53 @@ test('start still starts when fetch failed but a checkout exists', async () => {
   const source = await queries.getAppGitSource(app.id);
   assert.equal(source.last_status, 'success');
   assert.equal(source.deployed_commit, 'sha1');
+  // The non-fatal fetch warning must be visible, not console-only.
+  assert.match(source.last_error, /fetch failed: network unreachable/);
   assert.equal(source.sync_started_at, null);
+});
+
+test('a webhook during a start with auto-update on queues a background sync', async () => {
+  const app = await makeApp('git-start-webhook-auto', { deployType: 'npm' });
+  mockStartEnvironment();
+  // The webhook lands while the start still holds the claim: it records the
+  // newer remote commit but cannot sync (claim busy).
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {
+    await queries.setGitRemoteCommit(app.id, 'newer-sha');
+  });
+  mock.method(GitLifecycle, 'prepareForStart', async () => ({ commit: 'sha1', warning: null }));
+  const triggered = [];
+  mock.method(GitLifecycle, 'triggerBackgroundSync', (appId) => { triggered.push(appId); });
+
+  const started = await DeployManager.deployApp(app.id);
+
+  assert.equal(started.status, 'running');
+  // Releasing the claim surfaced the missed commit and queued a retry.
+  assert.deepEqual(triggered, [app.id]);
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'success');
+  assert.equal(source.deployed_commit, 'sha1');
+  assert.equal(source.remote_commit, 'newer-sha');
+});
+
+test('a webhook during a start with auto-update off marks update_available', async () => {
+  const app = await makeApp('git-start-webhook-off', { deployType: 'npm' });
+  await queries.setGitAutoUpdate(app.id, false);
+  mockStartEnvironment();
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {
+    await queries.setGitRemoteCommit(app.id, 'newer-sha');
+  });
+  mock.method(GitLifecycle, 'prepareForStart', async () => ({ commit: 'sha1', warning: null }));
+  let triggered = 0;
+  mock.method(GitLifecycle, 'triggerBackgroundSync', () => { triggered += 1; });
+
+  await DeployManager.deployApp(app.id);
+
+  assert.equal(triggered, 0);
+  const source = await queries.getAppGitSource(app.id);
+  // No auto-pull, but the operator must see there is something new.
+  assert.equal(source.last_status, 'update_available');
+  assert.equal(source.deployed_commit, 'sha1');
+  assert.equal(source.remote_commit, 'newer-sha');
 });
 
 test('start/restart/delete reject a fresh updating claim', async () => {

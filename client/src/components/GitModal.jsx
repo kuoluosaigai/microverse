@@ -25,6 +25,15 @@ const formatTime = (value) => {
 const errorMessage = (error, fallback) =>
   error?.response?.data?.error?.message || fallback
 
+// Mirrors the server's normalizeGitUrl so cosmetic differences (case, trailing
+// slash, `.git`) do not trigger a pointless overwrite warning.
+const normalizeUrl = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\/+$/, '')
+    .replace(/\.git$/, '')
+
 function GitModal({ open, app, onClose, onChanged }) {
   const { t } = useTranslation()
   const [form] = Form.useForm()
@@ -94,14 +103,10 @@ function GitModal({ open, app, onClose, onChanged }) {
     }
   }
 
-  const save = async (values) => {
+  const save = async (payload) => {
     setSaving(true)
     try {
-      const data = await bindAppGit(appId, {
-        url: values.url.trim(),
-        branch: values.branch?.trim() || 'main',
-        autoUpdate: !!values.autoUpdate
-      })
+      const data = await bindAppGit(appId, payload)
       setSource(data)
       fillForm(data)
       message.success(t('git.saveSuccess'))
@@ -111,6 +116,29 @@ function GitModal({ open, app, onClose, onChanged }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  const submit = (values) => {
+    const payload = {
+      url: values.url.trim(),
+      branch: values.branch?.trim() || 'main',
+      autoUpdate: !!values.autoUpdate
+    }
+    // Changing the repository or branch makes the NEXT start/update switch the
+    // worktree: repo-tracked files are overwritten. Warn before committing that.
+    const urlChanged = source && normalizeUrl(payload.url) !== normalizeUrl(source.url)
+    const branchChanged = source && payload.branch !== (source.branch || 'main')
+    if (!urlChanged && !branchChanged) {
+      save(payload)
+      return
+    }
+    Modal.confirm({
+      title: t('git.rebindConfirmTitle'),
+      content: t('git.rebindConfirm'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => save(payload)
+    })
   }
 
   const confirmUnbind = () => {
@@ -202,7 +230,7 @@ function GitModal({ open, app, onClose, onChanged }) {
     >
       <Spin spinning={loading}>
         <>
-          <Form form={form} layout="vertical" onFinish={save}>
+          <Form form={form} layout="vertical" onFinish={submit}>
             <Form.Item
               label={t('git.url')}
               name="url"
@@ -333,7 +361,7 @@ function GitModal({ open, app, onClose, onChanged }) {
                   type="primary"
                   onClick={pull}
                   loading={pulling}
-                  disabled={busy}
+                  disabled={busy || source.lastStatus === 'updating'}
                 >
                   {pulling ? t('git.pulling') : t('git.pull')}
                 </Button>

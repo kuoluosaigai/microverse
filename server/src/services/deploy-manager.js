@@ -83,14 +83,16 @@ class DeployManager {
     const source = await queries.getAppGitSource(appId);
     let gitClaimed = false;
     let gitCommit = null;
+    let gitWarning = null;
     if (source) {
       gitClaimed = await queries.claimGitSync(appId, config.git.staleSyncMs);
       if (!gitClaimed) throw new Error('Update in progress');
       try {
         const prepared = await GitLifecycle.prepareForStart(app, source);
         gitCommit = prepared.commit;
+        gitWarning = prepared.warning || null;
         // A fetch failure is not fatal: the last good checkout still starts.
-        if (prepared.warning) console.warn(`[git] ${app.name}: ${prepared.warning}`);
+        if (gitWarning) console.warn(`[git] ${app.name}: ${gitWarning}`);
       } catch (err) {
         // Clone (or checkout inspection) failed — nothing safe to launch and
         // the cause is client-facing (bad URL/branch, unreachable repo), not a
@@ -161,7 +163,27 @@ class DeployManager {
       try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
 
       if (gitClaimed) {
-        await queries.finishGitSync(appId, { status: 'success', deployedCommit: gitCommit });
+        // A fetch warning is not fatal, but it must stay visible in the UI
+        // (a success status with last_error carrying the warning).
+        await queries.finishGitSync(appId, {
+          status: 'success',
+          deployedCommit: gitCommit,
+          error: gitWarning
+        });
+
+        // A webhook can land while this start holds the claim: it records
+        // remote_commit but loses the claim (busy) and is never retried. Now
+        // that the claim is released, reconcile that missed commit — queue a
+        // background sync when auto-update is on, otherwise mark the update
+        // badge (markGitUpdateAvailable is a no-op while a fresh claim exists).
+        const current = await queries.getAppGitSource(appId);
+        if (current && current.remote_commit && current.remote_commit !== gitCommit) {
+          if (current.auto_update) {
+            GitLifecycle.triggerBackgroundSync(appId);
+          } else {
+            await queries.markGitUpdateAvailable(appId, config.git.staleSyncMs);
+          }
+        }
       }
 
       return AppManager.getAppById(appId);

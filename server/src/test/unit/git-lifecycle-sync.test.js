@@ -154,6 +154,31 @@ test('build failure rolls back to the previous commit and stores failed', async 
   assert.equal(source.sync_started_at, null);
 });
 
+test('rollback after a failed build forces install+build despite matching fingerprints', async () => {
+  const { app, src } = await makeGitApp('sync-rollback-force');
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  let restarts = 0;
+  mock.method(ProcessManager, 'restartProcess', async () => { restarts += 1; });
+  const ensureBuiltCalls = [];
+  mock.method(NpmLifecycle, 'ensureBuilt', async (appId, appPath, opts) => {
+    ensureBuiltCalls.push(opts);
+    if (ensureBuiltCalls.length === 1) throw new Error('build failed: boom');
+  });
+
+  await commitTo(src, 'two', 'two');
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(result.status, 'failed');
+  assert.equal(restarts, 0);
+  assert.equal(ensureBuiltCalls.length, 2);
+  // Forward build stays fingerprint-gated; the rollback must repair deps even
+  // though the restored package.json/lockfile match the stored fingerprint.
+  assert.equal(ensureBuiltCalls[0], undefined);
+  assert.deepEqual(ensureBuiltCalls[1], { force: true });
+});
+
 test('restart failure keeps the new commit and reports failed', async () => {
   const { app, src, appPath } = await makeGitApp('sync-restart-fail');
 
@@ -199,6 +224,30 @@ test('a same-SHA sync is up-to-date and runs no install/build', async () => {
   assert.equal(source.last_status, 'success');
   assert.equal(source.deployed_commit, prevSha);
   assert.ok(source.synced_at);
+  assert.equal(source.sync_started_at, null);
+});
+
+test('a same-SHA sync with a dirty worktree repairs it instead of reporting up-to-date', async () => {
+  const { app, appPath, prevSha } = await makeGitApp('sync-dirty');
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  mock.method(ProcessManager, 'restartProcess', async () => {});
+  let builds = 0;
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => { builds += 1; });
+
+  // A hand edit (or a failed deploy) leaves the checkout dirty at the same SHA.
+  fs.writeFileSync(path.join(appPath, 'a.txt'), 'local edit');
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.deployedCommit, prevSha);
+  assert.equal(builds, 1);
+  assert.equal(fs.readFileSync(path.join(appPath, 'a.txt'), 'utf8'), 'one');
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'success');
+  assert.equal(source.deployed_commit, prevSha);
   assert.equal(source.sync_started_at, null);
 });
 
@@ -252,12 +301,16 @@ test('check reports the deployed/remote commits and up-to-date state', async () 
   assert.equal(same.deployedCommit, prevSha);
   assert.equal(same.remoteCommit, prevSha);
   assert.equal(same.upToDate, true);
+  // A manual check persists the observed remote head for the UI/update badge.
+  assert.equal((await queries.getAppGitSource(app.id)).remote_commit, prevSha);
 
   await commitTo(src, 'two', 'two');
+  const advancedRemote = await GitLifecycle.currentHead(src);
   const advanced = await GitLifecycle.check(app, source);
   assert.equal(advanced.deployedCommit, prevSha);
-  assert.equal(advanced.remoteCommit, await GitLifecycle.currentHead(src));
+  assert.equal(advanced.remoteCommit, advancedRemote);
   assert.equal(advanced.upToDate, false);
+  assert.equal((await queries.getAppGitSource(app.id)).remote_commit, advancedRemote);
 });
 
 test('pull delegates to sync', async () => {
@@ -359,6 +412,53 @@ test('sync follows a re-bound URL instead of the checkout\'s old origin', async 
   const source = await queries.getAppGitSource(app.id);
   assert.equal(source.deployed_commit, shaB);
   assert.equal(source.last_status, 'success');
+});
+
+test('ensureBuilt force skips the fingerprint gates and persists fresh fingerprints', async () => {
+  const { app, appPath } = await makeGitApp('sync-force-build');
+  fs.writeFileSync(path.join(appPath, 'package.json'), JSON.stringify({ scripts: { build: 'x' } }));
+  fs.mkdirSync(path.join(appPath, 'node_modules'), { recursive: true });
+  await queries.setUpDeployState(app.id, {
+    installFp: NpmLifecycle.installFingerprint(appPath),
+    buildFp: NpmLifecycle.buildFingerprint(appPath)
+  });
+
+  const calls = [];
+  mock.method(NpmLifecycle, 'install', async () => { calls.push('install'); });
+  mock.method(NpmLifecycle, 'build', async () => { calls.push('build'); });
+
+  // Matching fingerprints: the default path does no work.
+  await NpmLifecycle.ensureBuilt(app.id, appPath);
+  assert.deepEqual(calls, []);
+
+  // Force runs both steps unconditionally (rollback repair path).
+  await NpmLifecycle.ensureBuilt(app.id, appPath, { force: true });
+  assert.deepEqual(calls, ['install', 'build']);
+
+  const state = await queries.getAppDeployState(app.id);
+  assert.equal(state.install_fp, NpmLifecycle.installFingerprint(appPath));
+  assert.equal(state.build_fp, NpmLifecycle.buildFingerprint(appPath));
+});
+
+test('sync coalesces a webhook commit recorded during an up-to-date attempt', async () => {
+  const { app } = await makeGitApp('sync-coalesce-uptodate');
+  const attempts = [];
+  mock.method(GitLifecycle, 'syncAttempt', async () => {
+    attempts.push(attempts.length + 1);
+    if (attempts.length === 1) {
+      // The remote moved on, but this attempt only managed to prove the
+      // deployed SHA (up-to-date). The loop must not stop here.
+      return { status: 'up-to-date', deployedCommit: 'deployed-sha', error: null };
+    }
+    return { status: 'success', deployedCommit: 'newer-sha', error: null };
+  });
+  await queries.setGitRemoteCommit(app.id, 'newer-sha');
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(attempts.length, 2);
+  assert.equal(result.status, 'success');
+  assert.equal(result.deployedCommit, 'newer-sha');
 });
 
 test('sync coalesces a webhook commit that landed mid-build (bounded retries)', async () => {

@@ -232,7 +232,7 @@ Opt-in via `PROXY_ENABLED`. The platform writes one nginx edge conf (`PROXY_CONF
 
 ### Git-source apps (cross-cutting, not a deploy type)
 
-Any deploy type can additionally be bound to a Git repository (`app_git_source`; secret-free summary attached to every app response as `git`, `null` when unbound). The repo content owns the app directory: uploads are rejected, `.git` is hidden from file listings and excluded from backups, and a zip replacement preserves `.git` (like `node_modules`).
+Any deploy type can additionally be bound to a Git repository (`app_git_source`; secret-free summary attached to every app response as `git`, `null` when unbound). The repo content owns the app directory: uploads are rejected, `.git` is hidden from file listings and excluded from backups, and a zip replacement preserves `.git` (like `node_modules`). Restoring a backup of a Git-sourced app produces a plain upload app — the Git binding and `.git` are not part of the backup.
 
 - **First start clones** the repo (depth-1 fetch of the bound branch); a failed clone fails the start. An existing checkout re-points `origin` at the stored URL on every start, so a URL re-bind is honored.
 - **`auto_update`** (default on): start fetches and hard-resets to the remote head (fetch failure is a non-fatal warning — the app starts on the last good checkout). When off, start uses the local HEAD and a webhook only records `remote_commit` + `last_status=update_available`.

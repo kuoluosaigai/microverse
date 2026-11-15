@@ -178,6 +178,8 @@ class GitLifecycle {
   /**
    * Compare the deployed commit with the remote branch head (no clone/worktree
    * changes). A missing branch yields `remoteCommit: null` and `upToDate: false`.
+   * The observed remote head is persisted so the UI/update badge reflects a
+   * manual check without waiting for a webhook delivery.
    * @param {object} app
    * @param {object} source app_git_source row
    * @returns {Promise<{ remoteCommit: string|null, deployedCommit: string|null, upToDate: boolean }>}
@@ -188,7 +190,21 @@ class GitLifecycle {
     }
     const deployedCommit = source.deployed_commit || null;
     const remoteCommit = await this.remoteHead(source);
+    await db().queries.setGitRemoteCommit(app.id, remoteCommit);
     return { remoteCommit, deployedCommit, upToDate: remoteCommit === deployedCommit };
+  }
+
+  /**
+   * Whether the checkout has no local modifications (tracked or untracked).
+   * `git status --porcelain` is empty exactly when reset/clean would be a no-op.
+   * Only used to decide if a same-SHA sync can skip the rebuild: a dirty tree
+   * (hand-edited or left over from a failed deploy) must be repaired.
+   * @param {string} appPath
+   * @returns {Promise<boolean>}
+   */
+  static async isWorktreeClean(appPath) {
+    const { stdout } = await this.gitExec(['status', '--porcelain'], { cwd: appPath });
+    return stdout.trim().length === 0;
   }
 
   /**
@@ -285,7 +301,11 @@ class GitLifecycle {
     let result = null;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       result = await this.syncAttempt(app);
-      if (result.status !== 'success') return result;
+      // 'up-to-date' is a successful attempt too: this attempt proved the
+      // deployed SHA, but a webhook may have recorded a newer remote_commit
+      // meanwhile. Keep coalescing in that window instead of leaving the app
+      // one commit behind.
+      if (result.status !== 'success' && result.status !== 'up-to-date') return result;
       const current = await db().queries.getAppGitSource(app.id);
       if (!current || !current.remote_commit || current.remote_commit === result.deployedCommit) {
         return result;
@@ -347,9 +367,9 @@ class GitLifecycle {
       await this.setRemote(app.path, source.url);
       newSha = await this.fetchHead(app.path, source.branch);
 
-      if (newSha === source.deployed_commit) {
-        // Same commit, but this still proves the remote was reached: record the
-        // success (and advance synced_at) via deployedCommit.
+      if (newSha === source.deployed_commit && await this.isWorktreeClean(app.path)) {
+        // Same commit AND a pristine worktree: nothing to fetch/reset/rebuild.
+        // Still record the success (and advance synced_at) via deployedCommit.
         await db().queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
         return { status: 'up-to-date', deployedCommit: newSha, error: null };
       }
@@ -375,7 +395,10 @@ class GitLifecycle {
       }
       if (app.deploy_type === 'npm') {
         try {
-          await npmLifecycle().ensureBuilt(app.id, app.path);
+          // Force: the restored package.json/lockfile match the stored install
+          // fingerprint, so the fingerprint gates would skip the very install
+          // and build that the rollback needs to repair the deployment.
+          await npmLifecycle().ensureBuilt(app.id, app.path, { force: true });
         } catch (_rebuildErr) {
           // Best-effort only: never mask the original error.
         }

@@ -158,6 +158,8 @@
     "lastError": "最近错误",
     "notBound": "尚未绑定 Git 仓库。保存后将把此应用绑定到该仓库。",
     "saveSuccess": "Git 仓库已保存",
+    "rebindConfirmTitle": "切换仓库或分支？",
+    "rebindConfirm": "下一次启动或更新会把工作区切换到新的仓库/分支，仓库跟踪的文件将被覆盖。建议先备份。",
     "pullSuccess": "更新已拉取",
     "pullFailed": "更新失败",
     "checkUpToDate": "已是最新",

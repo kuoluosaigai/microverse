@@ -124,17 +124,22 @@ class NpmLifecycle {
    * Post-run fingerprints are stored from the AFTER state because npm may
    * rewrite the lockfile itself; a dependency change (install ran) forces a
    * build even when app sources are untouched.
+   * `force` skips the fingerprint gates and runs install + build unconditionally.
+   * GitLifecycle's rollback uses it: a `git reset --hard` restores the OLD
+   * package.json/lockfile, which matches the stored install fingerprint, but the
+   * dependencies/build output must still be repaired after the failed attempt.
    * @param {number} appId
    * @param {string} appPath
+   * @param {{ force?: boolean }} [options]
    */
-  static async ensureBuilt(appId, appPath) {
+  static async ensureBuilt(appId, appPath, { force = false } = {}) {
     const state = await queries.getAppDeployState(appId);
-    const mustInstall = this.needsInstall(appPath, state && state.install_fp);
+    const mustInstall = force || this.needsInstall(appPath, state && state.install_fp);
     if (mustInstall) {
       await this.install(appPath);
       await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
     }
-    if (mustInstall || this.needsBuild(appPath, state && state.build_fp)) {
+    if (force || mustInstall || this.needsBuild(appPath, state && state.build_fp)) {
       await this.build(appPath); // no-op when there is no build script
       await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
     }
