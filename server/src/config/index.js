@@ -92,6 +92,14 @@ const config = {
     instanceName: process.env.PM2_INSTANCE_NAME || 'microverse-server'
   },
 
+  // Git-source deploys: binary used for clone/fetch, the per-command timeout,
+  // and the age after which an unfinished sync is considered stale.
+  git: {
+    bin: process.env.GIT_BIN || 'git',
+    timeoutMs: intFromEnv('GIT_TIMEOUT_MS', 120000),
+    staleSyncMs: intFromEnv('GIT_STALE_SYNC_MS', 30 * 60 * 1000)
+  },
+
   // Platform self-update (opt-in): pull SELF_UPDATE_REF from SELF_UPDATE_REMOTE,
   // build into client/dist.next, health-check, then swap dists + pm2 reload.
   selfUpdate: {
