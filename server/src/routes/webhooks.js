@@ -47,14 +47,16 @@ router.post('/github/:appId', async (req, res, next) => {
 
     // Signature over the RAW bytes, before parsing (parsing first would allow
     // JSON-shape attacks to run on unauthenticated input). A missing/non-Buffer
-    // body (wrong content type) is treated as a failed signature.
-    if (!verifyWebhookSignature(req.body, source.webhook_secret, req.get('X-Hub-Signature-256'))) {
+    // body (wrong content type, zero-length body) is treated as a failed
+    // signature — verifyWebhookSignature cannot hash an object and would
+    // otherwise surface as an unauthenticated 500.
+    if (!Buffer.isBuffer(req.body)
+        || !verifyWebhookSignature(req.body, source.webhook_secret, req.get('X-Hub-Signature-256'))) {
       return sendError(res, 401, 'Invalid webhook signature');
     }
 
     let payload;
     try {
-      if (!Buffer.isBuffer(req.body)) throw new Error('missing raw body');
       payload = JSON.parse(req.body.toString('utf8'));
     } catch (_err) {
       return sendError(res, 400, 'Malformed JSON payload');

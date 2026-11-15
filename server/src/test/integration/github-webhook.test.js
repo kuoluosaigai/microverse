@@ -128,6 +128,35 @@ test('missing signature returns 401', async () => {
   assert.equal(res.status, 401);
 });
 
+test('body-less push with a syntactically valid signature header returns 401', async () => {
+  const app = await makeBoundApp();
+
+  const res = await request()
+    .post(`/api/webhooks/github/${app.id}`)
+    .set('Content-Type', 'application/json')
+    .set('X-GitHub-Event', 'push')
+    .set('X-Hub-Signature-256', 'sha256=' + 'a'.repeat(64));
+
+  assert.equal(res.status, 401);
+  assert.equal(res.body.success, false);
+  assert.equal(res.body.error.message, 'Invalid webhook signature');
+});
+
+test('non-JSON content type returns 401 instead of 500', async () => {
+  const app = await makeBoundApp();
+
+  const res = await request()
+    .post(`/api/webhooks/github/${app.id}`)
+    .set('Content-Type', 'text/plain')
+    .set('X-GitHub-Event', 'push')
+    .set('X-Hub-Signature-256', 'sha256=' + 'a'.repeat(64))
+    .send('hello');
+
+  assert.equal(res.status, 401);
+  assert.equal(res.body.success, false);
+  assert.equal(res.body.error.message, 'Invalid webhook signature');
+});
+
 test('unknown app returns 404', async () => {
   const body = payload();
 
