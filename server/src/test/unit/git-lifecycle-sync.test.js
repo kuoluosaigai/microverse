@@ -251,6 +251,85 @@ test('a same-SHA sync with a dirty worktree repairs it instead of reporting up-t
   assert.equal(source.sync_started_at, null);
 });
 
+test('a same-SHA sync ignores platform-managed nginx files and preserves them', async () => {
+  const { app, appPath, prevSha } = await makeGitApp('sync-nginx-uptodate', { deployType: 'nginx' });
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  let restarts = 0;
+  mock.method(ProcessManager, 'restartProcess', async () => { restarts += 1; });
+
+  // NginxLifecycle writes these into the app dir after the deploy; they are
+  // untracked and un-gitignored, but they are platform state, not user dirt.
+  const platformFiles = [
+    `nginx.${app.name}.conf`,
+    'nginx.pid',
+    'nginx-access.log',
+    'nginx-error.log'
+  ];
+  for (const name of platformFiles) {
+    fs.writeFileSync(path.join(appPath, name), `platform ${name}`);
+  }
+  fs.mkdirSync(path.join(appPath, 'node_modules', 'pkg'), { recursive: true });
+  fs.writeFileSync(path.join(appPath, 'node_modules', 'pkg', 'index.js'), 'dep');
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(result.status, 'up-to-date');
+  assert.equal(result.deployedCommit, prevSha);
+  assert.equal(restarts, 0);
+  for (const name of platformFiles) {
+    assert.equal(fs.readFileSync(path.join(appPath, name), 'utf8'), `platform ${name}`);
+  }
+  assert.equal(fs.readFileSync(path.join(appPath, 'node_modules', 'pkg', 'index.js'), 'utf8'), 'dep');
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'success');
+  assert.equal(source.deployed_commit, prevSha);
+});
+
+test('a new commit syncs and preserves platform-managed nginx files through reset/clean', async () => {
+  const { app, src, appPath } = await makeGitApp('sync-nginx-newcommit', { deployType: 'nginx' });
+
+  mock.method(ProcessManager, 'getProcessStatus', async () => onlineStatus());
+  let restarts = 0;
+  mock.method(ProcessManager, 'restartProcess', async () => { restarts += 1; });
+
+  const platformFiles = [
+    `nginx.${app.name}.conf`,
+    'nginx.pid',
+    'nginx-access.log',
+    'nginx-error.log'
+  ];
+  for (const name of platformFiles) {
+    fs.writeFileSync(path.join(appPath, name), `platform ${name}`);
+  }
+  fs.mkdirSync(path.join(appPath, 'node_modules', 'pkg'), { recursive: true });
+  fs.writeFileSync(path.join(appPath, 'node_modules', 'pkg', 'index.js'), 'dep');
+  // Ordinary untracked user content must still be cleaned away.
+  fs.writeFileSync(path.join(appPath, 'scratch.txt'), 'user dirt');
+
+  await commitTo(src, 'two', 'two');
+  const newSha = await GitLifecycle.currentHead(src);
+
+  const result = await GitLifecycle.sync(app);
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.deployedCommit, newSha);
+  assert.equal(restarts, 0);
+  // The tracked source did move (reset happened)...
+  assert.equal(fs.readFileSync(path.join(appPath, 'a.txt'), 'utf8'), 'two');
+  // ...but git clean -fd spared the platform files (and node_modules).
+  for (const name of platformFiles) {
+    assert.equal(fs.readFileSync(path.join(appPath, name), 'utf8'), `platform ${name}`);
+  }
+  assert.equal(fs.readFileSync(path.join(appPath, 'node_modules', 'pkg', 'index.js'), 'utf8'), 'dep');
+  assert.equal(fs.existsSync(path.join(appPath, 'scratch.txt')), false);
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'success');
+  assert.equal(source.deployed_commit, newSha);
+});
+
 test('second sync is busy while the first claim is fresh', async () => {
   const { app } = await makeGitApp('sync-busy');
 

@@ -186,6 +186,45 @@ test('a webhook during a start with auto-update off marks update_available', asy
   assert.equal(source.remote_commit, 'newer-sha');
 });
 
+test('a post-launch git bookkeeping failure does not fail a successful start', async () => {
+  const app = await makeApp('git-start-postlaunch-db-fail', { deployType: 'npm' });
+
+  let launched = false;
+  mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
+  mock.method(ProcessManager, 'startProcess', async () => { launched = true; return { success: true }; });
+  mock.method(ProxyManager, 'regenerate', async () => ({ ok: true }));
+  mock.method(NpmLifecycle, 'ensureBuilt', async () => {});
+  mock.method(GitLifecycle, 'prepareForStart', async () => ({ commit: 'sha1', warning: null }));
+  mock.method(console, 'error', () => {});
+
+  const triggered = [];
+  mock.method(GitLifecycle, 'triggerBackgroundSync', (appId) => { triggered.push(appId); });
+
+  // Pre-launch reads pass through; the first read AFTER the process is up (the
+  // missed-webhook coalescing read) blows up. That used to be inside the start
+  // try/catch, which flipped the app to failed and returned a 500.
+  const realGet = queries.getAppGitSource;
+  let failedOnce = false;
+  mock.method(queries, 'getAppGitSource', async (id) => {
+    const source = await realGet(id);
+    if (launched && !failedOnce) {
+      failedOnce = true;
+      throw new Error('db hiccup after launch');
+    }
+    return source;
+  });
+
+  const started = await DeployManager.deployApp(app.id);
+
+  assert.equal(failedOnce, true);
+  assert.equal(started.status, 'running');
+  assert.deepEqual(triggered, []);
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.last_status, 'success');
+  assert.equal(source.deployed_commit, 'sha1');
+  assert.equal(source.sync_started_at, null);
+});
+
 test('start/restart/delete reject a fresh updating claim', async () => {
   const app = await makeApp('git-guard-updating');
   mockStartEnvironment();

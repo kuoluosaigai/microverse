@@ -161,8 +161,17 @@ class DeployManager {
       // Best-effort: refresh the edge-proxy routes so this app's subdomain is
       // reachable. Never let a proxy problem block the deploy.
       try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
-
+    } catch (err) {
       if (gitClaimed) {
+        await queries.finishGitSync(appId, { status: 'failed', error: err.message, deployedCommit: gitCommit });
+      }
+      throw err;
+    }
+
+    // The process is up: everything below is bookkeeping, so a DB hiccup here
+    // must never turn a successful start into a 500 (or record it as failed).
+    if (gitClaimed) {
+      try {
         // A fetch warning is not fatal, but it must stay visible in the UI
         // (a success status with last_error carrying the warning).
         await queries.finishGitSync(appId, {
@@ -184,15 +193,12 @@ class DeployManager {
             await queries.markGitUpdateAvailable(appId, config.git.staleSyncMs);
           }
         }
+      } catch (err) {
+        console.error(`[git] post-start bookkeeping failed for ${app.name}: ${err && err.message ? err.message : err}`);
       }
-
-      return AppManager.getAppById(appId);
-    } catch (err) {
-      if (gitClaimed) {
-        await queries.finishGitSync(appId, { status: 'failed', error: err.message, deployedCommit: gitCommit });
-      }
-      throw err;
     }
+
+    return AppManager.getAppById(appId);
   }
 
   /**

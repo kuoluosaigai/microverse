@@ -3,6 +3,7 @@ const util = require('util');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
+const { platformManagedNames } = require('../utils/stale-files');
 
 // DB / PM2 / npm services are required lazily inside the methods that use them.
 // Requiring ../db at module load opens the SQLite connection and logs progress
@@ -195,16 +196,78 @@ class GitLifecycle {
   }
 
   /**
-   * Whether the checkout has no local modifications (tracked or untracked).
-   * `git status --porcelain` is empty exactly when reset/clean would be a no-op.
-   * Only used to decide if a same-SHA sync can skip the rebuild: a dirty tree
-   * (hand-edited or left over from a failed deploy) must be repaired.
+   * Paths reported by one `git status --porcelain` line. Renames and copies
+   * report both sides ("orig -> dest"); git double-quotes unusual filenames.
+   * @param {string} line
+   * @returns {string[]}
+   */
+  static statusPaths(line) {
+    const body = line.length > 3 ? line.slice(3) : '';
+    return body.split(' -> ').map((raw) => {
+      if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+        // Enough C-style unquoting for the exact-name checks below; git only
+        // quotes paths containing control characters, quotes or backslashes.
+        return raw.slice(1, -1).replace(/\\(.)/g, '$1');
+      }
+      return raw;
+    });
+  }
+
+  /**
+   * Whether one reported path is platform-managed and thus irrelevant to
+   * worktree cleanliness. `node_modules`, the git checkout and the per-app
+   * nginx config/pid/log files are platform-owned; their presence is the
+   * normal deployed state, not user dirt.
+   * @param {object|undefined} app app row (needs name)
+   * @param {string} reportedPath
+   * @returns {boolean}
+   */
+  static isPlatformManagedPath(app, reportedPath) {
+    if (!app || !app.name) return false;
+    const managed = platformManagedNames(app);
+    const top = reportedPath.replace(/\\/g, '/').split('/')[0];
+    return managed.has(top);
+  }
+
+  /**
+   * `git clean` argv that preserves platform-managed entries. Without the
+   * exclusions a destructive sync deletes the per-app nginx config/pid/logs,
+   * and the PM2-managed nginx process then dies on the next restart because its
+   * `-c` path is gone. `.git` is never a clean candidate and needs no
+   * exclusion; `node_modules` is always kept (even when no app is given).
+   * @param {object} [app] app row (needs name)
+   * @returns {string[]} argv for gitExec
+   */
+  static cleanArgs(app) {
+    const excluded = new Set(['node_modules']);
+    if (app && app.name) {
+      for (const name of platformManagedNames(app)) {
+        if (name !== '.git') excluded.add(name);
+      }
+    }
+    const args = ['clean', '-fd'];
+    for (const name of excluded) args.push('-e', name);
+    return args;
+  }
+
+  /**
+   * Whether the checkout has no local modifications (tracked or untracked),
+   * ignoring platform-managed entries (node_modules plus the per-app nginx
+   * config/pid/logs). The platform writes those into the app directory itself,
+   * so counting them as dirt made every started nginx app look dirty and let a
+   * same-SHA sync reset/clean them away. Only used to decide if a same-SHA sync
+   * can skip the rebuild: real dirt (hand edits, leftover deploy files) must
+   * still be repaired.
    * @param {string} appPath
+   * @param {object} [app] app row; when given, its platform-managed names are ignored
    * @returns {Promise<boolean>}
    */
-  static async isWorktreeClean(appPath) {
+  static async isWorktreeClean(appPath, app) {
     const { stdout } = await this.gitExec(['status', '--porcelain'], { cwd: appPath });
-    return stdout.trim().length === 0;
+    const lines = stdout.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    return lines.every((line) =>
+      this.statusPaths(line).every((reportedPath) => this.isPlatformManagedPath(app, reportedPath))
+    );
   }
 
   /**
@@ -264,8 +327,9 @@ class GitLifecycle {
     try {
       const commit = await this.fetchHead(app.path, source.branch);
       await this.gitExec(['reset', '--hard', 'FETCH_HEAD'], { cwd: app.path });
-      // -fd only: never -x, which would delete node_modules / platform files.
-      await this.gitExec(['clean', '-fd'], { cwd: app.path });
+      // -fd only: never -x, plus -e exclusions so node_modules and the per-app
+      // nginx config/pid/logs survive the reset (the running nginx needs them).
+      await this.gitExec(this.cleanArgs(app), { cwd: app.path });
       return { commit, warning: null };
     } catch (err) {
       const message = err && err.message ? err.message : String(err);
@@ -367,8 +431,9 @@ class GitLifecycle {
       await this.setRemote(app.path, source.url);
       newSha = await this.fetchHead(app.path, source.branch);
 
-      if (newSha === source.deployed_commit && await this.isWorktreeClean(app.path)) {
-        // Same commit AND a pristine worktree: nothing to fetch/reset/rebuild.
+      if (newSha === source.deployed_commit && await this.isWorktreeClean(app.path, app)) {
+        // Same commit AND no user dirt: nothing to fetch/reset/rebuild. The
+        // per-app nginx files are platform-owned and do not count as dirt.
         // Still record the success (and advance synced_at) via deployedCommit.
         await db().queries.finishGitSync(app.id, { status: 'success', deployedCommit: newSha });
         return { status: 'up-to-date', deployedCommit: newSha, error: null };
@@ -376,8 +441,9 @@ class GitLifecycle {
 
       prevSha = await this.currentHead(app.path);
       await this.gitExec(['reset', '--hard', 'FETCH_HEAD'], { cwd: app.path });
-      // -fd only: never -x, which would delete node_modules / platform files.
-      await this.gitExec(['clean', '-fd'], { cwd: app.path });
+      // -fd only: never -x, plus -e exclusions so node_modules and the per-app
+      // nginx config/pid/logs survive (the running nginx needs its -c file).
+      await this.gitExec(this.cleanArgs(app), { cwd: app.path });
 
       if (app.deploy_type === 'npm') {
         await npmLifecycle().ensureBuilt(app.id, app.path);
