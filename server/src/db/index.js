@@ -181,19 +181,35 @@ const queries = {
 
   getAllAppGitSources: () => dbAll('SELECT * FROM app_git_source'),
 
-  // Bind (or re-bind) the app's source. An omitted webhook_secret keeps the
-  // stored one, so a re-bind that only changes url/branch does not rotate it.
-  upsertAppGitSource: ({ appId, url, branch, autoUpdate, webhookSecret }) => dbRun(
-    `INSERT INTO app_git_source (app_id, url, branch, auto_update, webhook_secret)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(app_id) DO UPDATE SET
-       url = excluded.url,
-       branch = excluded.branch,
-       auto_update = excluded.auto_update,
-       webhook_secret = COALESCE(excluded.webhook_secret, app_git_source.webhook_secret),
-       updated_at = CURRENT_TIMESTAMP`,
-    [appId, url, branch || 'main', autoUpdate === undefined ? 1 : (autoUpdate ? 1 : 0), webhookSecret ?? null]
-  ),
+  // Bind (or re-bind) the app's source. Re-binding is an UPDATE first, so every
+  // omitted field keeps the stored value — a URL-only re-bind must not silently
+  // re-enable auto-deploy, reset the branch, or rotate the webhook secret. Only
+  // a first bind INSERTs, where omitted branch/auto_update take their defaults
+  // ('main' / 1); a first bind still requires webhook_secret (NOT NULL).
+  // UPDATE-then-INSERT (rather than INSERT ... ON CONFLICT) because SQLite
+  // evaluates the INSERT row's NOT NULL constraints BEFORE conflict resolution.
+  upsertAppGitSource: async ({ appId, url, branch, autoUpdate, webhookSecret }) => {
+    const autoUpdateValue = autoUpdate === undefined || autoUpdate === null
+      ? null
+      : (autoUpdate ? 1 : 0);
+
+    const updated = await dbRun(
+      `UPDATE app_git_source SET
+         url = ?,
+         branch = COALESCE(?, branch),
+         auto_update = COALESCE(?, auto_update),
+         webhook_secret = COALESCE(?, webhook_secret),
+         updated_at = CURRENT_TIMESTAMP
+       WHERE app_id = ?`,
+      [url, branch || null, autoUpdateValue, webhookSecret ?? null, appId]
+    );
+    if (updated.changes > 0) return updated;
+
+    return dbRun(
+      'INSERT INTO app_git_source (app_id, url, branch, auto_update, webhook_secret) VALUES (?, ?, ?, ?, ?)',
+      [appId, url, branch || 'main', autoUpdateValue === null ? 1 : autoUpdateValue, webhookSecret ?? null]
+    );
+  },
 
   setGitRemoteCommit: (appId, sha) => dbRun(
     'UPDATE app_git_source SET remote_commit = ?, updated_at = CURRENT_TIMESTAMP WHERE app_id = ?',

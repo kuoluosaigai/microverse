@@ -29,6 +29,43 @@ test('upsert + get returns the source', async () => {
   assert.equal(row.deployed_commit, null);
 });
 
+test('re-binding with only a new url preserves branch, auto_update, and secret', async () => {
+  const app = await AppManager.createApp('git-store-a2', 'npm');
+  await queries.upsertAppGitSource({
+    appId: app.id,
+    url: 'https://github.com/o/r.git',
+    branch: 'dev',
+    autoUpdate: false,
+    webhookSecret: 'keep-me'
+  });
+
+  await queries.upsertAppGitSource({ appId: app.id, url: 'https://github.com/o/other.git' });
+
+  const row = await queries.getAppGitSource(app.id);
+  assert.equal(row.url, 'https://github.com/o/other.git');
+  assert.equal(row.branch, 'dev');
+  assert.equal(row.auto_update, 0);
+  assert.equal(row.webhook_secret, 'keep-me');
+});
+
+test('re-binding with explicit values updates branch and auto_update', async () => {
+  const app = await AppManager.createApp('git-store-a3', 'npm');
+  await queries.upsertAppGitSource(source(app.id, 's9'));
+
+  await queries.upsertAppGitSource({
+    appId: app.id,
+    url: 'https://github.com/o/r.git',
+    branch: 'release/2',
+    autoUpdate: false,
+    webhookSecret: 's10'
+  });
+
+  const row = await queries.getAppGitSource(app.id);
+  assert.equal(row.branch, 'release/2');
+  assert.equal(row.auto_update, 0);
+  assert.equal(row.webhook_secret, 's10');
+});
+
 test('claimGitSync is exclusive until the claim goes stale', async () => {
   const app = await AppManager.createApp('git-store-b', 'npm');
   await queries.upsertAppGitSource(source(app.id, 's2'));
