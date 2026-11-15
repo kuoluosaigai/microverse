@@ -31,7 +31,11 @@ class BackupManager {
     const zip = new AdmZip();
     zip.addFile(MANIFEST_NAME, JSON.stringify(manifest, null, 2));
     if (fs.existsSync(app.path)) {
-      zip.addLocalFolder(app.path, 'files');
+      // A git working copy is platform state, not user content: skip any entry
+      // whose path contains a `.git` segment. Other dotfiles are kept.
+      zip.addLocalFolder(app.path, 'files', (entryPath) =>
+        !entryPath.split(/[\\/]/).includes('.git')
+      );
     }
     return { buffer: zip.toBuffer(), filename: `${app.name}-backup.zip` };
   }

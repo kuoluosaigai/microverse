@@ -121,7 +121,7 @@ router.post('/apps/restore', (req, res, next) => {
 // Create new application
 router.post('/apps', async (req, res, next) => {
   try {
-    const { name, deploy_type } = req.body;
+    const { name, deploy_type, git_url, git_branch, git_auto_update } = req.body;
 
     if (!name || !deploy_type) {
       return res.status(400).json({
@@ -130,14 +130,26 @@ router.post('/apps', async (req, res, next) => {
       });
     }
 
-    const newApp = await AppManager.createApp(name, deploy_type);
+    const gitOptions = git_url
+      ? {
+          url: git_url,
+          branch: git_branch || 'main',
+          autoUpdate: git_auto_update !== false
+        }
+      : null;
+
+    const newApp = await AppManager.createApp(name, deploy_type, gitOptions);
 
     res.status(201).json({
       success: true,
       data: newApp
     });
   } catch (error) {
-    if (error.message.includes('already exists') || error.message.includes('Invalid')) {
+    if (
+      error.message.includes('already exists') ||
+      error.message.includes('Invalid') ||
+      error.message.includes('Git URL')
+    ) {
       return res.status(400).json({
         success: false,
         error: { message: error.message }
@@ -433,6 +445,15 @@ router.post('/apps/:id/upload', async (req, res, next) => {
   try {
     // Get app and verify it exists
     const app = await AppManager.getAppById(req.params.id);
+
+    // A git-sourced app's content is owned by the repository: an upload would
+    // be silently reverted on the next sync, so reject it up front.
+    if (await queries.getAppGitSource(app.id)) {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'Git source apps must be updated from the repository' }
+      });
+    }
 
     // Set upload path for multer
     req.uploadPath = app.path;

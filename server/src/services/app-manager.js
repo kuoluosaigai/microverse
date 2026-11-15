@@ -4,6 +4,8 @@ const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
 const ProxyManager = require('./proxy-manager');
 const { isValidAppName } = require('../utils/validate-app-name');
+const { validateGitUrl, validateGitBranch } = require('../utils/validate-git-source');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,9 +32,14 @@ function toGitSummary(row) {
 
 class AppManager {
   /**
-   * Create a new application
+   * Create a new application.
+   * @param {string} name
+   * @param {'npm'|'http-server'|'nginx'} deployType
+   * @param {{url: string, branch?: string, autoUpdate?: boolean}|null} [gitOptions]
+   *   optional git source to bind in the same call. Validated BEFORE the app
+   *   row or directory is created, so invalid input has no side effects.
    */
-  static async createApp(name, deployType) {
+  static async createApp(name, deployType, gitOptions = null) {
     // Validate inputs
     if (!name || !deployType) {
       throw new Error('Name and deploy_type are required');
@@ -46,14 +53,36 @@ class AppManager {
       throw new Error('Invalid deploy_type. Must be: npm, http-server, or nginx');
     }
 
+    // Validate the optional git source up front — no DB row or directory may
+    // exist for a rejected URL/branch.
+    let git = null;
+    if (gitOptions) {
+      const url = gitOptions.url;
+      const branch = gitOptions.branch || 'main';
+      const autoUpdate = gitOptions.autoUpdate === undefined || gitOptions.autoUpdate === null
+        ? true
+        : Boolean(gitOptions.autoUpdate);
+
+      const urlError = validateGitUrl(url);
+      if (urlError) throw new Error(urlError);
+      const branchError = validateGitBranch(branch);
+      if (branchError) throw new Error(branchError);
+
+      git = { url, branch, autoUpdate };
+    }
+
     // Check if app already exists
     const existing = await queries.getAppByName(name);
     if (existing) {
       throw new Error(`App '${name}' already exists`);
     }
 
-    // Create app directory
+    // Create app directory. Remember whether we created it (or whether it was
+    // empty) so a failed git-source insert can clean up without destroying
+    // user files that predate the create call.
     const appPath = pathHelper.getAppDir(name);
+    const dirExisted = fs.existsSync(appPath);
+    const dirWasEmpty = dirExisted ? fs.readdirSync(appPath).length === 0 : true;
     pathHelper.ensureDir(appPath);
 
     // Insert into database
@@ -65,7 +94,31 @@ class AppManager {
       status: 'stopped'
     });
 
-    return queries.getAppById(result.lastID);
+    if (git) {
+      try {
+        await queries.upsertAppGitSource({
+          appId: result.lastID,
+          url: git.url,
+          branch: git.branch,
+          autoUpdate: git.autoUpdate,
+          // First bind only: the NOT NULL column needs a secret. A later
+          // re-bind through upsert keeps this value (COALESCE).
+          webhookSecret: crypto.randomBytes(32).toString('hex')
+        });
+      } catch (err) {
+        // Compensate in reverse order: drop the app row, then the directory
+        // only when this call created it or found it empty. A pre-existing
+        // non-empty directory holds user content and is never removed here.
+        try { await queries.deleteApp(result.lastID); } catch (_e) { /* best-effort */ }
+        if (!dirExisted || dirWasEmpty) {
+          try { fs.rmSync(appPath, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
+        }
+        throw err;
+      }
+    }
+
+    // Enriched shape (git attached), so the create response matches GET /apps.
+    return this.getAppById(result.lastID);
   }
 
   /**
@@ -206,11 +259,15 @@ class AppManager {
 
     const files = fs.readdirSync(app.path, { withFileTypes: true });
 
-    return files.map(file => ({
-      name: file.name,
-      type: file.isDirectory() ? 'directory' : 'file',
-      path: file.name
-    }));
+    // `.git` is the sync working copy, not deployable user content — hide it
+    // from the file browser (ordinary dotfiles stay visible).
+    return files
+      .filter(file => file.name !== '.git')
+      .map(file => ({
+        name: file.name,
+        type: file.isDirectory() ? 'directory' : 'file',
+        path: file.name
+      }));
   }
 
   /**
