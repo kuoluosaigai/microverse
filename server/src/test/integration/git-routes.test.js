@@ -136,6 +136,40 @@ test('pull returns 409 while a fresh claim exists', async () => {
   assert.match(res.body.error.message, /in progress/i);
 });
 
+test('PUT returns 409 and leaves the binding unchanged during a live sync', async () => {
+  const app = await AppManager.createApp('routes-git-put-busy', 'npm');
+  const secret = 'f'.repeat(64);
+  await bind(app.id, { url: 'https://github.com/o/old', webhookSecret: secret });
+  assert.equal(await queries.claimGitSync(app.id, config.git.staleSyncMs), true);
+  const agent = await adminAgent();
+
+  const res = await agent.put(`/api/apps/${app.id}/git`)
+    .send({ url: 'https://github.com/o/new', branch: 'dev' })
+    .expect(409);
+
+  assert.equal(res.body.success, false);
+  assert.match(res.body.error.message, /in progress/i);
+
+  const source = await queries.getAppGitSource(app.id);
+  assert.equal(source.url, 'https://github.com/o/old');
+  assert.equal(source.branch, 'main');
+  assert.equal(source.webhook_secret, secret);
+  assert.equal(source.last_status, 'updating');
+});
+
+test('DELETE returns 409 and keeps the binding during a live sync', async () => {
+  const app = await AppManager.createApp('routes-git-del-busy', 'npm');
+  await bind(app.id);
+  assert.equal(await queries.claimGitSync(app.id, config.git.staleSyncMs), true);
+  const agent = await adminAgent();
+
+  const res = await agent.delete(`/api/apps/${app.id}/git`).expect(409);
+
+  assert.equal(res.body.success, false);
+  assert.match(res.body.error.message, /in progress/i);
+  assert.ok(await queries.getAppGitSource(app.id));
+});
+
 test('pull returns the deployed commit on success', async (t) => {
   const app = await AppManager.createApp('routes-git-pull-ok', 'npm');
   await bind(app.id);
@@ -177,10 +211,26 @@ test('check returns the lifecycle comparison and maps git errors to 400', async 
   assert.deepEqual(ok.body.data, { remoteCommit: 'bbb', deployedCommit: 'aaa', upToDate: false });
 
   check.mock.mockImplementation(async () => {
-    throw new Error('git ls-remote failed: boom');
+    const error = new Error('git ls-remote failed: boom');
+    error.gitError = true;
+    throw error;
   });
   const failed = await agent.post(`/api/apps/${app.id}/git/check`).expect(400);
   assert.match(failed.body.error.message, /git ls-remote failed/);
+});
+
+test('check lets unexpected errors reach the error handler as 500', async (t) => {
+  const app = await AppManager.createApp('routes-git-check-500', 'npm');
+  await bind(app.id);
+  const agent = await adminAgent();
+  t.mock.method(GitLifecycle, 'check', async () => {
+    throw new Error('database is locked');
+  });
+
+  const res = await agent.post(`/api/apps/${app.id}/git/check`).expect(500);
+
+  assert.equal(res.body.success, false);
+  assert.match(res.body.error.message, /database is locked/);
 });
 
 test('unbind keeps the app and its files', async () => {

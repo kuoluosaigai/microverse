@@ -41,6 +41,26 @@ function sendError(res, status, message) {
   return res.status(status).json({ success: false, error: { message } });
 }
 
+// Expected client-facing failures during check/pull. Everything else is a
+// server fault and must reach the global error handler (500 + logged) rather
+// than being misreported as a 400.
+const CLIENT_GIT_ERROR_PATTERNS = [
+  'Invalid git ',
+  'npm install failed',
+  'npm install timed out',
+  'build failed',
+  'npm run build timed out',
+  'package.json not found',
+  'Invalid package.json'
+];
+
+function isClientGitError(error) {
+  if (!error) return false;
+  if (error.gitError === true) return true;
+  const message = typeof error.message === 'string' ? error.message : '';
+  return CLIENT_GIT_ERROR_PATTERNS.some((pattern) => message.includes(pattern));
+}
+
 // Get the app's git binding (secret-bearing shape).
 router.get('/apps/:id/git', async (req, res, next) => {
   try {
@@ -61,6 +81,10 @@ router.get('/apps/:id/git', async (req, res, next) => {
 router.put('/apps/:id/git', async (req, res, next) => {
   try {
     const app = await AppManager.getAppById(req.params.id);
+    // A live sync owns the working tree and its claim; mutating the binding
+    // (and especially resetGitSourceProgress, which clears sync_started_at)
+    // would let the running pull write the old repo's commits onto the new one.
+    await GitLifecycle.assertNotSyncing(app.id);
     const body = req.body || {};
     const url = body.url;
 
@@ -115,6 +139,9 @@ router.put('/apps/:id/git', async (req, res, next) => {
 router.delete('/apps/:id/git', async (req, res, next) => {
   try {
     const app = await AppManager.getAppById(req.params.id);
+    // Unbinding during a sync would delete the row the running pull is about
+    // to finish against; refuse until it settles.
+    await GitLifecycle.assertNotSyncing(app.id);
     await queries.deleteAppGitSource(app.id);
     res.json({ success: true });
   } catch (error) {
@@ -163,7 +190,8 @@ router.post('/apps/:id/git/check', async (req, res, next) => {
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
     // Reaching the remote is the operation itself; a git failure is a client-
     // actionable condition (bad URL/branch/credentials), not a platform fault.
-    return sendError(res, 400, error.message);
+    if (isClientGitError(error)) return sendError(res, 400, error.message);
+    next(error);
   }
 });
 
@@ -191,7 +219,8 @@ router.post('/apps/:id/git/pull', async (req, res, next) => {
   } catch (error) {
     if (error.message === 'App not found') return sendError(res, 404, error.message);
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
-    return sendError(res, 400, error.message);
+    if (isClientGitError(error)) return sendError(res, 400, error.message);
+    next(error);
   }
 });
 

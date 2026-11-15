@@ -62,7 +62,11 @@ class GitLifecycle {
       });
     } catch (err) {
       const detail = err.stderr || err.message || String(err);
-      throw new Error(`git ${args[0]} failed: ${String(detail).slice(-500)}`);
+      // Tag git subprocess failures so route handlers can map them to 400
+      // without also swallowing unrelated server faults (DB/PM2/plumbing).
+      const wrapped = new Error(`git ${args[0]} failed: ${String(detail).slice(-500)}`);
+      wrapped.gitError = true;
+      throw wrapped;
     }
   }
 
