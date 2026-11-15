@@ -4,6 +4,7 @@ const { apiLimiter } = require('../middleware/rate-limit');
 const systemRouter = require('./system');
 const { publicRouter: authPublicRouter, protectedRouter: authProtectedRouter } = require('./auth');
 const appsRouter = require('./apps');
+const gitRouter = require('./git');
 const proxyRouter = require('./proxy');
 const updateRouter = require('./update');
 
@@ -28,6 +29,7 @@ router.use(apiLimiter);
 
 // --- Protected ---
 router.use(appsRouter);
+router.use(gitRouter);
 router.use(proxyRouter);
 router.use(updateRouter);
 router.use(authProtectedRouter);
