@@ -188,13 +188,18 @@ class DeployManager {
    * Delete an application. Reconciles with PM2 first so a dead-but-DB-"running"
    * app can be cleaned up in one call instead of erroring with "stop it first";
    * the AppManager guard still protects genuinely running apps.
+   * @param {number} appId
+   * @param {{deleteFiles?: boolean}} [options] also remove the app directory.
    */
-  static async deleteApp(appId) {
+  static async deleteApp(appId, options = {}) {
     const app = await this.reconcileStatus(appId);
     // When reconcile flipped the status and already regenerated, the conf on
     // disk no longer references this app — skip AppManager's second regenerate
     // (one nginx write/validate/reload cycle per delete instead of two).
-    return AppManager.deleteApp(appId, { skipProxyRegenerate: !!app[PROXY_ALREADY_REGENERATED] });
+    return AppManager.deleteApp(appId, {
+      deleteFiles: !!options.deleteFiles,
+      skipProxyRegenerate: !!app[PROXY_ALREADY_REGENERATED]
+    });
   }
 
   /**

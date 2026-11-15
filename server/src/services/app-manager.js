@@ -5,6 +5,7 @@ const NpmLifecycle = require('./npm-lifecycle');
 const ProxyManager = require('./proxy-manager');
 const { isValidAppName } = require('../utils/validate-app-name');
 const fs = require('fs');
+const path = require('path');
 
 /**
  * Application Manager Service
@@ -100,10 +101,14 @@ class AppManager {
   /**
    * Delete application.
    * @param {number} id
-   * @param {{skipProxyRegenerate?: boolean}} [options] set by DeployManager when
-   *   its status reconcile already regenerated the edge conf moments ago.
+   * @param {{deleteFiles?: boolean, skipProxyRegenerate?: boolean}} [options]
+   *   deleteFiles: remove the app directory too (default false; the DB row is
+   *   kept when the directory cannot be safely removed).
+   *   skipProxyRegenerate: set by DeployManager when its status reconcile
+   *   already regenerated the edge conf moments ago.
    */
   static async deleteApp(id, options = {}) {
+    const { deleteFiles = false } = options;
     const app = await this.getAppById(id);
 
     // Check if app is running
@@ -120,6 +125,20 @@ class AppManager {
       console.warn(`Could not remove PM2 process for '${app.name}': ${err.message}`);
     }
 
+    // Optional: remove the app directory. Only a path strictly inside APPS_DIR
+    // is eligible — a DB row pointing at APPS_DIR itself, a sibling, or any
+    // other location is refused BEFORE the row is deleted, so the app remains
+    // visible and can be repaired instead of silently leaking its data.
+    if (deleteFiles) {
+      const appsRoot = path.resolve(pathHelper.getAppsDir());
+      const target = path.resolve(app.path);
+      const rel = path.relative(appsRoot, target);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error('Refusing to delete a directory outside APPS_DIR');
+      }
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+
     // Delete from database (metrics rows cascade via FK; the explicit delete
     // covers DBs whose metrics table predates the FK).
     await queries.deleteApp(id);
@@ -129,8 +148,6 @@ class AppManager {
       try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after delete failed: ${e.message}`); }
     }
 
-    // Note: We don't delete the app directory to prevent data loss
-    // User should manually delete if needed
     return true;
   }
 

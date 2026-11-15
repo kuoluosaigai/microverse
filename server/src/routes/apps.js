@@ -151,11 +151,12 @@ router.post('/apps', async (req, res, next) => {
 // checked against PM2 truth, not a stale DB flag)
 router.delete('/apps/:id', async (req, res, next) => {
   try {
-    await DeployManager.deleteApp(req.params.id);
+    const deleteFiles = req.query.deleteFiles === 'true';
+    await DeployManager.deleteApp(req.params.id, { deleteFiles });
 
     res.json({
       success: true,
-      data: { message: 'App deleted successfully' }
+      data: { message: 'App deleted successfully', filesDeleted: deleteFiles }
     });
   } catch (error) {
     if (error.message === 'App not found') {
@@ -164,7 +165,7 @@ router.delete('/apps/:id', async (req, res, next) => {
         error: { message: error.message }
       });
     }
-    if (error.message.includes('Cannot delete running app')) {
+    if (error.message.includes('Cannot delete running app') || error.message.includes('Refusing to delete')) {
       return res.status(400).json({
         success: false,
         error: { message: error.message }
