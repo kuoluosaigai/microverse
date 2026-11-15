@@ -179,6 +179,7 @@ function Dashboard() {
               onDelete={handleDelete}
               onToggleDefault={handleToggleDefault}
               startingId={startingId}
+              onRefresh={() => loadApps(true)}
             />
           ))}
         </ul>

@@ -85,45 +85,51 @@ function UploadFiles() {
       </h1>
       <div className="lead">{t('uploadFiles.uploadDescription')}</div>
 
-      <div style={{ maxWidth: 720, marginTop: 28 }}>
-        <Dragger {...uploadProps} className="dropzone">
-          <div className="dz-text">{t('uploadFiles.dragHint')}</div>
-          <div className="dz-hint">{t('uploadFiles.dragDescription')}</div>
-          <div className="dz-hint">{t('uploadFiles.maxSizeValue', { size: sizeMb })}</div>
-        </Dragger>
-
-        {fileList.length > 0 && (
-          <ul className="file-list">
-            {fileList.map((file, i) => (
-              <li className="file-row" key={file.uid}>
-                <div className="num">{String(i + 1).padStart(2, '0')}</div>
-                <div className="ext">{extOf(file.name)}</div>
-                <div className="fname">{file.name}</div>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div style={{ marginTop: 26 }}>
-          <Button
-            type="primary"
-            className="btn-ink"
-            icon={null}
-            onClick={handleUpload}
-            loading={uploading}
-            disabled={fileList.length === 0}
-          >
-            {uploading ? t('uploadFiles.uploading') : t('uploadFiles.uploadButton')}
-          </Button>
+      {app?.git ? (
+        <div className="note" style={{ maxWidth: 720 }}>
+          <p>{t('upload.gitDisabled')}</p>
         </div>
+      ) : (
+        <div style={{ maxWidth: 720, marginTop: 28 }}>
+          <Dragger {...uploadProps} className="dropzone">
+            <div className="dz-text">{t('uploadFiles.dragHint')}</div>
+            <div className="dz-hint">{t('uploadFiles.dragDescription')}</div>
+            <div className="dz-hint">{t('uploadFiles.maxSizeValue', { size: sizeMb })}</div>
+          </Dragger>
 
-        {app && app.deploy_type === 'http-server' && (
-          <div className="note">
-            <h4>{t('uploadFiles.quickTipTitle')}</h4>
-            <p>{t('uploadFiles.quickTipStatic')}</p>
+          {fileList.length > 0 && (
+            <ul className="file-list">
+              {fileList.map((file, i) => (
+                <li className="file-row" key={file.uid}>
+                  <div className="num">{String(i + 1).padStart(2, '0')}</div>
+                  <div className="ext">{extOf(file.name)}</div>
+                  <div className="fname">{file.name}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div style={{ marginTop: 26 }}>
+            <Button
+              type="primary"
+              className="btn-ink"
+              icon={null}
+              onClick={handleUpload}
+              loading={uploading}
+              disabled={fileList.length === 0}
+            >
+              {uploading ? t('uploadFiles.uploading') : t('uploadFiles.uploadButton')}
+            </Button>
           </div>
-        )}
-      </div>
+
+          {app && app.deploy_type === 'http-server' && (
+            <div className="note">
+              <h4>{t('uploadFiles.quickTipTitle')}</h4>
+              <p>{t('uploadFiles.quickTipStatic')}</p>
+            </div>
+          )}
+        </div>
+      )}
     </EditorialShell>
   )
 }

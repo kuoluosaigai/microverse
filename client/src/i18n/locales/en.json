@@ -89,6 +89,9 @@
     "quickTipTitle": "Quick Tip",
     "quickTipStatic": "For static sites, make sure you have an index.html file in your upload. You can upload it individually or include it in a ZIP file."
   },
+  "upload": {
+    "gitDisabled": "This app is bound to a Git repository and its files come from that repository. Unbind the Git source before uploading files."
+  },
   "appCard": {
     "type": "Type",
     "port": "Port",
@@ -125,7 +128,48 @@
       "directory": "Directory"
     },
     "backup": "Backup",
-    "rootDefault": "Root domain"
+    "rootDefault": "Root domain",
+    "git": "Git",
+    "gitUpdateAvailable": "Update available"
+  },
+  "git": {
+    "title": "Git source",
+    "url": "Repository URL",
+    "branch": "Branch",
+    "autoUpdate": "Auto update",
+    "save": "Save",
+    "unbind": "Unbind",
+    "unbindConfirm": "Unbind this repository? Deployed files are kept, but updates stop.",
+    "webhookUrl": "Webhook URL",
+    "webhookSecret": "Webhook secret",
+    "copy": "Copy",
+    "copied": "Copied",
+    "show": "Show",
+    "hide": "Hide",
+    "regenerate": "Regenerate secret",
+    "regenerateConfirm": "Regenerate the webhook secret? Update the secret in GitHub afterwards, or pushes will be rejected.",
+    "check": "Check for updates",
+    "pull": "Pull update",
+    "pulling": "Pulling…",
+    "status": "Status",
+    "deployedCommit": "Deployed commit",
+    "remoteCommit": "Remote commit",
+    "syncedAt": "Last synced",
+    "lastError": "Last error",
+    "notBound": "No Git repository bound. Saving binds this app to the repository.",
+    "saveSuccess": "Git source saved",
+    "pullSuccess": "Update pulled",
+    "pullFailed": "Update failed",
+    "checkUpToDate": "Already up to date",
+    "checkBehind": "Updates are available",
+    "urlRequired": "Enter a repository URL",
+    "statusLabels": {
+      "idle": "Idle",
+      "updating": "Updating",
+      "success": "Success",
+      "failed": "Failed",
+      "update_available": "Update available"
+    }
   },
   "appLogs": {
     "title": "Logs",

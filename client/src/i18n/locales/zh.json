@@ -89,6 +89,9 @@
     "quickTipTitle": "快速提示",
     "quickTipStatic": "对于静态网站，请确保上传中包含 index.html 文件。您可以单独上传或包含在 ZIP 文件中。"
   },
+  "upload": {
+    "gitDisabled": "此应用已绑定 Git 仓库，文件由仓库同步。请先解除绑定后再上传文件。"
+  },
   "appCard": {
     "type": "类型",
     "port": "端口",
@@ -125,7 +128,48 @@
       "directory": "目录"
     },
     "backup": "备份",
-    "rootDefault": "根域名"
+    "rootDefault": "根域名",
+    "git": "Git",
+    "gitUpdateAvailable": "有更新"
+  },
+  "git": {
+    "title": "Git 仓库",
+    "url": "仓库地址",
+    "branch": "分支",
+    "autoUpdate": "自动更新",
+    "save": "保存",
+    "unbind": "解除绑定",
+    "unbindConfirm": "确定解除此仓库绑定？已部署的文件会保留，但不再自动更新。",
+    "webhookUrl": "Webhook 地址",
+    "webhookSecret": "Webhook 密钥",
+    "copy": "复制",
+    "copied": "已复制",
+    "show": "显示",
+    "hide": "隐藏",
+    "regenerate": "重新生成密钥",
+    "regenerateConfirm": "重新生成 Webhook 密钥？之后请同步更新 GitHub 中的密钥，否则推送将被拒绝。",
+    "check": "检查更新",
+    "pull": "拉取更新",
+    "pulling": "拉取中…",
+    "status": "状态",
+    "deployedCommit": "已部署提交",
+    "remoteCommit": "远程提交",
+    "syncedAt": "最近同步",
+    "lastError": "最近错误",
+    "notBound": "尚未绑定 Git 仓库。保存后将把此应用绑定到该仓库。",
+    "saveSuccess": "Git 仓库已保存",
+    "pullSuccess": "更新已拉取",
+    "pullFailed": "更新失败",
+    "checkUpToDate": "已是最新",
+    "checkBehind": "有可用更新",
+    "urlRequired": "请输入仓库地址",
+    "statusLabels": {
+      "idle": "空闲",
+      "updating": "更新中",
+      "success": "成功",
+      "failed": "失败",
+      "update_available": "有更新"
+    }
   },
   "appLogs": {
     "title": "日志",

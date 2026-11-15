@@ -7,8 +7,9 @@ import { getAppFiles, backupAppUrl } from '../api/apps'
 import { useAppConfig } from '../context/AppConfigContext'
 import { buildAppUrl, buildRootUrl } from '../utils/app-url'
 import EnvModal from './EnvModal'
+import GitModal from './GitModal'
 
-function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, startingId }) {
+function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, startingId, onRefresh }) {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const appConfig = useAppConfig()
@@ -18,6 +19,7 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
   const [files, setFiles] = useState([])
   const [loadingDir, setLoadingDir] = useState(false)
   const [envOpen, setEnvOpen] = useState(false)
+  const [gitOpen, setGitOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteFiles, setDeleteFiles] = useState(false)
   const starting = startingId === app.id
@@ -61,6 +63,25 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
         <div>
           <div className="name">{app.name}</div>
           <div className="sub">{typeLabel}</div>
+          {app.git && (
+            <div className="sub" style={{ textTransform: 'none', marginTop: 2 }}>
+              {'git · '}
+              {app.git.deployed_commit ? app.git.deployed_commit.slice(0, 7) : '—'}
+              {app.git.last_status === 'update_available' && (
+                <span
+                  style={{
+                    color: 'var(--accent)',
+                    border: '1px solid var(--accent)',
+                    borderRadius: 3,
+                    padding: '1px 6px',
+                    marginLeft: 8
+                  }}
+                >
+                  {t('appCard.gitUpdateAvailable')}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="port">
           {app.port ? (
@@ -112,12 +133,14 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
           <button className="act" onClick={() => navigate(`/apps/${app.id}/metrics`)}>
             {t('appCard.metrics')}
           </button>
-          <button
-            className="act"
-            onClick={() => navigate(`/apps/${app.id}/upload`)}
-          >
-            {t('appCard.upload')}
-          </button>
+          {!app.git && (
+            <button
+              className="act"
+              onClick={() => navigate(`/apps/${app.id}/upload`)}
+            >
+              {t('appCard.upload')}
+            </button>
+          )}
           <button
             className="act"
             onClick={() => {
@@ -136,6 +159,9 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
               {t('appCard.env')}
             </button>
           )}
+          <button className="act" onClick={() => setGitOpen(true)}>
+            {t('appCard.git')}
+          </button>
           {appConfig?.proxyEnabled && isRunning && app.port && (
             <span className="default-toggle">
               <Switch
@@ -226,6 +252,14 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
       {app.deploy_type === 'npm' && (
         <EnvModal appId={app.id} open={envOpen} onCancel={() => setEnvOpen(false)} />
       )}
+
+      <GitModal
+        open={gitOpen}
+        app={app}
+        onClose={() => setGitOpen(false)}
+        onChanged={() => onRefresh?.()}
+      />
+
     </>
   )
 }
