@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { queries } = require('../db');
 const config = require('../config');
 const ProcessManager = require('./process-manager');
+const { perfLine } = require('../utils/lap-timer');
 
 const execPromise = util.promisify(exec);
 const execFilePromise = util.promisify(execFile);
@@ -63,7 +64,11 @@ class NpmLifecycle {
    * @returns {string|null} null when the directory is unreadable
    */
   static buildFingerprint(appPath) {
-    const skip = new Set(['node_modules']);
+    // `.git` is platform-managed state, not app source. A git sync rewrites its
+    // internals (FETCH_HEAD/ORIG_HEAD/index/objects) on every start even when no
+    // tracked file changed, so hashing it made the fingerprint — and therefore a
+    // full `npm run build` — re-run on every single deploy of a Git-sourced app.
+    const skip = new Set(['node_modules', '.git']);
     const skipName = (name) =>
       skip.has(name) || /^pm2\..*\.config\.cjs$/.test(name) || /^nginx[.]/.test(name);
     const lines = [];
@@ -97,11 +102,31 @@ class NpmLifecycle {
   }
 
   /**
-   * Does this app need `npm install`? Always when node_modules is missing or
-   * the install fingerprint changed since the stored one (null = never run).
+   * Does the app declare anything to install? `npm install` does not create
+   * `node_modules` for a dependency-free package, so treating a missing
+   * `node_modules` as "never installed" made every start of such an app re-run
+   * install — and, because install forces a rebuild, a full `npm run build`.
+   * @returns {boolean}
+   */
+  static hasDependencies(appPath) {
+    let pkg;
+    try {
+      pkg = this.readPackageJson(appPath);
+    } catch (_err) {
+      return false; // unreadable package.json: install would fail anyway
+    }
+    return [pkg.dependencies, pkg.devDependencies].some(
+      (deps) => deps && typeof deps === 'object' && Object.keys(deps).length > 0
+    );
+  }
+
+  /**
+   * Does this app need `npm install`? Always when the install fingerprint
+   * changed since the stored one (null = never run), and when a dependency
+   * tree that should exist is gone (manually deleted, or an interrupted install).
    */
   static needsInstall(appPath, savedFp) {
-    if (!fs.existsSync(path.join(appPath, 'node_modules'))) return true;
+    if (this.hasDependencies(appPath) && !fs.existsSync(path.join(appPath, 'node_modules'))) return true;
     if (!savedFp) return true;
     const current = this.installFingerprint(appPath);
     return current !== savedFp;
@@ -133,15 +158,25 @@ class NpmLifecycle {
    * @param {{ force?: boolean }} [options]
    */
   static async ensureBuilt(appId, appPath, { force = false } = {}) {
+    const scope = path.basename(appPath);
     const state = await queries.getAppDeployState(appId);
     const mustInstall = force || this.needsInstall(appPath, state && state.install_fp);
+    const installStartedAt = Date.now();
     if (mustInstall) {
       await this.install(appPath);
       await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
+      perfLine(scope, 'npm install', Date.now() - installStartedAt);
+    } else {
+      perfLine(scope, 'npm install', Date.now() - installStartedAt, 'skipped (fingerprint unchanged)');
     }
-    if (force || mustInstall || this.needsBuild(appPath, state && state.build_fp)) {
+    const mustBuild = force || mustInstall || this.needsBuild(appPath, state && state.build_fp);
+    const buildStartedAt = Date.now();
+    if (mustBuild) {
       await this.build(appPath); // no-op when there is no build script
       await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
+      perfLine(scope, 'npm run build', Date.now() - buildStartedAt);
+    } else {
+      perfLine(scope, 'npm run build', Date.now() - buildStartedAt, 'skipped (fingerprint unchanged)');
     }
   }
 

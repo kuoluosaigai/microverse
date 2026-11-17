@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const NginxLifecycle = require('./nginx-lifecycle');
+const { perfLine } = require('../utils/lap-timer');
 
 const execPromise = util.promisify(exec);
 const execFilePromise = util.promisify(execFile);
@@ -162,25 +163,38 @@ class ProcessManager {
    */
   static async pm2Exec(args, options = {}) {
     const opts = { maxBuffer: 10 * 1024 * 1024, ...options };
-
-    if (process.platform === 'win32') {
-      const entry = this.resolvePm2Entry();
-      if (entry) {
-        return execFilePromise(process.execPath, [entry, ...args], opts);
+    const startedAt = Date.now();
+    const finish = () => {
+      // Every lifecycle op pays for at least one PM2 CLI spawn (node boot +
+      // daemon RPC). Worth a line when it dominates a request.
+      const ms = Date.now() - startedAt;
+      if (ms >= ProcessManager.PM2_SLOW_MS) {
+        perfLine('pm2', args[0], ms, `slow (>=${ProcessManager.PM2_SLOW_MS}ms)`);
       }
-      return execPromise(`pm2 ${args.map(a => `"${a}"`).join(' ')}`, opts);
-    }
+    };
 
     try {
-      return await execFilePromise('pm2', args, opts);
-    } catch (err) {
-      if (err.code === 'ENOENT') {
+      if (process.platform === 'win32') {
         const entry = this.resolvePm2Entry();
         if (entry) {
-          return execFilePromise(process.execPath, [entry, ...args], opts);
+          return await execFilePromise(process.execPath, [entry, ...args], opts);
         }
+        return await execPromise(`pm2 ${args.map(a => `"${a}"`).join(' ')}`, opts);
       }
-      throw err;
+
+      try {
+        return await execFilePromise('pm2', args, opts);
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          const entry = this.resolvePm2Entry();
+          if (entry) {
+            return await execFilePromise(process.execPath, [entry, ...args], opts);
+          }
+        }
+        throw err;
+      }
+    } finally {
+      finish();
     }
   }
 
@@ -432,14 +446,26 @@ class ProcessManager {
    */
   static async findAvailablePort(minPort, maxPort, options = {}) {
     const exclude = new Set(options.exclude || []);
+    const startedAt = Date.now();
+    let probes = 0;
     for (let port = minPort; port <= maxPort; port++) {
       if (exclude.has(port)) continue;
+      probes++;
       if (await this.isPortAvailable(port)) {
+        perfLine('ports', 'findAvailablePort', Date.now() - startedAt,
+          `probed=${probes} range=${minPort}-${maxPort} -> ${port}`);
         return port;
       }
     }
+    perfLine('ports', 'findAvailablePort', Date.now() - startedAt,
+      `probed=${probes} range=${minPort}-${maxPort} -> NONE`);
     throw new Error('No available ports in range');
   }
 }
+
+// PM2 CLI calls slower than this get a `[deploy-perf]` line. The threshold has
+// to sit above normal spawn cost because MetricsSampler polls `jlist` every 10s
+// in one worker — a low bar would write ~6 lines/minute forever.
+ProcessManager.PM2_SLOW_MS = 3000;
 
 module.exports = ProcessManager;

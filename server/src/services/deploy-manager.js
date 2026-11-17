@@ -7,6 +7,7 @@ const ProxyManager = require('./proxy-manager');
 const { queries } = require('../db');
 const config = require('../config');
 const { createExclusive } = require('../utils/serialize');
+const { createLapTimer, perfLine } = require('../utils/lap-timer');
 
 // Marks an app row whose status reconcileStatus just flipped running->stopped
 // (and whose edge-proxy config was therefore already regenerated). Symbol keys
@@ -67,9 +68,12 @@ class DeployManager {
    * Deploy an application (start it)
    */
   static async deployApp(appId) {
+    const deployStartedAt = Date.now();
     // Reconcile first: a crashed/removed PM2 process must not block a re-start
     // with "already running", and a live one must not be launched twice.
     const app = await this.reconcileStatus(appId);
+    const perf = createLapTimer(app.name, deployStartedAt);
+    perf.lap('reconcile(pm2 jlist)');
 
     // Check if already running BEFORE any git work: a start must never fetch
     // and hard-reset the worktree under a live process.
@@ -89,11 +93,13 @@ class DeployManager {
       if (!gitClaimed) throw new Error('Update in progress');
       try {
         const prepared = await GitLifecycle.prepareForStart(app, source);
+        perf.lap('git-prepare(clone/fetch/reset/clean)');
         gitCommit = prepared.commit;
         gitWarning = prepared.warning || null;
         // A fetch failure is not fatal: the last good checkout still starts.
         if (gitWarning) console.warn(`[git] ${app.name}: ${gitWarning}`);
       } catch (err) {
+        perf.lap('git-prepare(clone/fetch/reset/clean)', 'FAILED');
         // Clone (or checkout inspection) failed — nothing safe to launch and
         // the cause is client-facing (bad URL/branch, unreachable repo), not a
         // server fault. Mark it so the start route maps it to 400 without
@@ -111,6 +117,7 @@ class DeployManager {
     try {
       // Validate app can be deployed
       const validation = await AppManager.validateAppDeployment(appId);
+      perf.lap('validate(files on disk)');
       if (!validation.valid) {
         throw new Error(validation.message);
       }
@@ -133,6 +140,7 @@ class DeployManager {
           await AppManager.updateApp(appId, { port });
           return port;
         });
+        perf.lap('port-assign');
       }
 
       // Start the process. For npm: install → build → resolve env → launch with env.
@@ -154,14 +162,18 @@ class DeployManager {
       } else {
         await ProcessManager.startProcess(app);
       }
+      perf.lap('launch(pm2 start)');
 
       // Update status in database
       await queries.updateAppStatus('running', appId);
+      perf.lap('db status=running');
 
       // Best-effort: refresh the edge-proxy routes so this app's subdomain is
       // reachable. Never let a proxy problem block the deploy.
       try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+      perf.lap('proxy regenerate');
     } catch (err) {
+      perfLine(app.name, 'deployApp FAILED after', perf.total(), err.message);
       if (gitClaimed) {
         await queries.finishGitSync(appId, { status: 'failed', error: err.message, deployedCommit: gitCommit });
       }
@@ -196,8 +208,10 @@ class DeployManager {
       } catch (err) {
         console.error(`[git] post-start bookkeeping failed for ${app.name}: ${err && err.message ? err.message : err}`);
       }
+      perf.lap('git bookkeeping');
     }
 
+    perfLine(app.name, 'deployApp total', perf.total());
     return AppManager.getAppById(appId);
   }
 

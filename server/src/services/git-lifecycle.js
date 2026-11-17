@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const { platformManagedNames } = require('../utils/stale-files');
+const { perfLine } = require('../utils/lap-timer');
 
 // DB / PM2 / npm services are required lazily inside the methods that use them.
 // Requiring ../db at module load opens the SQLite connection and logs progress
@@ -54,6 +55,7 @@ class GitLifecycle {
    * @returns {Promise<{ stdout: string, stderr: string }>}
    */
   static async gitExec(args, { cwd, timeoutMs } = {}) {
+    const startedAt = Date.now();
     try {
       return await execFilePromise(config.git.bin, args, {
         cwd,
@@ -68,6 +70,10 @@ class GitLifecycle {
       const wrapped = new Error(`git ${args[0]} failed: ${String(detail).slice(-500)}`);
       wrapped.gitError = true;
       throw wrapped;
+    } finally {
+      // A remote that is merely slow (not down) is invisible without this: the
+      // deploy itself blocks, so the only clue is where the wall time went.
+      perfLine(cwd ? path.basename(cwd) : 'git', `git ${args.slice(0, 3).join(' ')}`, Date.now() - startedAt);
     }
   }
 
@@ -223,10 +229,28 @@ class GitLifecycle {
    * @returns {boolean}
    */
   static isPlatformManagedPath(app, reportedPath) {
+    const top = reportedPath.replace(/\\/g, '/').split('/')[0];
+    // The platform's own npm artifacts count as the normal deployed state too
+    // (see platformDeployArtifacts): without this, `?? package-lock.json` made
+    // every same-commit sync look dirty and take the destructive path.
+    if (GitLifecycle.platformDeployArtifacts().includes(top)) return true;
     if (!app || !app.name) return false;
     const managed = platformManagedNames(app);
-    const top = reportedPath.replace(/\\/g, '/').split('/')[0];
     return managed.has(top);
+  }
+
+  /**
+   * Deploy artifacts the platform generates INSIDE a git checkout. A repo that
+   * ships no lockfile still ends up with `package-lock.json` after the
+   * platform's own `npm install`; it is untracked, so `git clean -fd` would
+   * delete it and `git status` would report it as dirt. Either way the install
+   * fingerprint flipped on every sync, so a Git-sourced npm app reinstalled and
+   * rebuilt from scratch on every single start. Files the repo tracks are
+   * untouched by clean/reset regardless, so preserving this name only affects
+   * the platform-generated case.
+   */
+  static platformDeployArtifacts() {
+    return ['package-lock.json'];
   }
 
   /**
@@ -239,7 +263,7 @@ class GitLifecycle {
    * @returns {string[]} argv for gitExec
    */
   static cleanArgs(app) {
-    const excluded = new Set(['node_modules']);
+    const excluded = new Set(['node_modules', ...this.platformDeployArtifacts()]);
     if (app && app.name) {
       for (const name of platformManagedNames(app)) {
         if (name !== '.git') excluded.add(name);

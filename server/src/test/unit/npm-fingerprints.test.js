@@ -33,7 +33,7 @@ test('installFingerprint is content-based: same bytes -> same fp, edited -> chan
   }
 });
 
-test('buildFingerprint tracks the app tree but ignores node_modules and platform files', () => {
+test('buildFingerprint tracks the app tree but ignores node_modules, .git and platform files', () => {
   const dir = tmpApp();
   try {
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"a"}');
@@ -50,6 +50,15 @@ test('buildFingerprint tracks the app tree but ignores node_modules and platform
     fs.writeFileSync(path.join(dir, 'nginx.a.conf'), 'x');
     assert.equal(NpmLifecycle.buildFingerprint(dir), fp1);
 
+    // Git metadata is not app source: a fetch/reset rewrites .git internals on
+    // every start, and hashing them made a Git-sourced app rebuild every time.
+    fs.mkdirSync(path.join(dir, '.git', 'refs', 'heads'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.git', 'FETCH_HEAD'), 'abc123\tnot-for-main\n');
+    assert.equal(NpmLifecycle.buildFingerprint(dir), fp1, 'creating .git must not flip the fp');
+    fs.writeFileSync(path.join(dir, '.git', 'FETCH_HEAD'), 'def456\tnot-for-main\n');
+    fs.writeFileSync(path.join(dir, '.git', 'refs', 'heads', 'main'), 'def456');
+    assert.equal(NpmLifecycle.buildFingerprint(dir), fp1, 'rewriting .git must not flip the fp');
+
     // A source edit flips it.
     fs.writeFileSync(path.join(dir, 'index.js'), 'console.log(2222)');
     const fp2 = NpmLifecycle.buildFingerprint(dir);
@@ -64,17 +73,24 @@ test('buildFingerprint tracks the app tree but ignores node_modules and platform
   }
 });
 
-test('needsInstall: missing node_modules always installs; matching fp with node_modules present skips', () => {
+test('needsInstall: a missing dependency tree installs only when deps exist', () => {
   const dir = tmpApp();
   try {
+    // Dependency-free: `npm install` legitimately produces no node_modules, so
+    // its absence must not re-trigger install on every start.
     fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"a"}');
     const fp = NpmLifecycle.installFingerprint(dir);
-
-    assert.equal(NpmLifecycle.needsInstall(dir, fp), true); // no node_modules yet
-    fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
     assert.equal(NpmLifecycle.needsInstall(dir, fp), false);
     assert.equal(NpmLifecycle.needsInstall(dir, null), true); // never ran
-    assert.equal(NpmLifecycle.needsInstall(dir, 'stale'), true);
+    assert.equal(NpmLifecycle.needsInstall(dir, 'stale'), true); // lockfile/definition changed
+
+    // Declared dependencies: node_modules is the proof install completed, so a
+    // missing tree (deleted, or an interrupted install) must install again.
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"a","dependencies":{"ms":"^2.0.0"}}');
+    const fpDeps = NpmLifecycle.installFingerprint(dir);
+    assert.equal(NpmLifecycle.needsInstall(dir, fpDeps), true);
+    fs.mkdirSync(path.join(dir, 'node_modules'), { recursive: true });
+    assert.equal(NpmLifecycle.needsInstall(dir, fpDeps), false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

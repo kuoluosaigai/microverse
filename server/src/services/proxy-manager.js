@@ -8,6 +8,7 @@ const execFilePromise = util.promisify(execFile);
 
 const config = require('../config');
 const { queries } = require('../db');
+const { perfLine } = require('../utils/lap-timer');
 
 const HEADER = '# Managed by Microverse — do not edit by hand; regenerated on app lifecycle.';
 
@@ -248,9 +249,12 @@ async function regenerate(scope = {}) {
 
   // `nginx -t` validates the ENTIRE main config (incl. our include), not just
   // our file — so a bad vhost anywhere still blocks reload. Never reload on fail.
+  let testStartedAt = Date.now();
   try {
     await execFn(bin, ['-t'], EXEC_OPTS);
+    perfLine('proxy', 'nginx -t', Date.now() - testStartedAt);
   } catch (err) {
+    perfLine('proxy', 'nginx -t', Date.now() - testStartedAt, 'FAILED');
     // Roll back the on-disk conf so a broken render can't survive a future
     // nginx restart. Best-effort: this must never throw out of the catch.
     if (prior !== null) {
@@ -263,9 +267,12 @@ async function regenerate(scope = {}) {
     return { ok: false, reason: 'test-failed', message: msg };
   }
 
+  testStartedAt = Date.now();
   try {
     await execFn(bin, ['-s', 'reload'], EXEC_OPTS);
+    perfLine('proxy', 'nginx -s reload', Date.now() - testStartedAt);
   } catch (err) {
+    perfLine('proxy', 'nginx -s reload', Date.now() - testStartedAt, 'FAILED');
     const msg = binError(bin, err, 'nginx reload failed');
     console.warn(`⚠ [proxy] ${msg}`);
     return { ok: false, reason: 'reload-failed', message: msg };
