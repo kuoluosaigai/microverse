@@ -45,6 +45,13 @@ npx pm2 logs <app-name>      # View logs for specific app
 npx pm2 delete <app-name>    # Remove app from PM2
 ```
 
+### Deployment latency diagnostics
+```bash
+node scripts/diagnose-deploy-perf.js env           # Read-only: PM2 spawn / npm registry / git remote / nginx cost + per-app fingerprints
+node scripts/diagnose-deploy-perf.js start <id>    # ONE real instrumented start: per-boundary ms + why each install/build gate fired
+```
+Every lifecycle op logs `[deploy-perf] <app> <step>: <ms>` (see `server/src/utils/lap-timer.js`), so `pm2 logs` alone shows where a slow deploy spent its time.
+
 ## Architecture
 
 ### Workspace Structure
@@ -97,8 +104,10 @@ Three core orchestration services in `server/src/services/`, plus specialized se
 
 Specialized services:
 - **NpmLifecycle** - npm apps: fingerprint-gated `npm install` (incl. devDependencies) + optional `npm run build` — content hash of `package.json`/lockfile gates install, a stat-based app-tree hash gates build, fingerprints persist in the `app_deploy_state` table so a plain stop→start skips both; resolves user env vars (`app_env` table) into the PM2 ecosystem env.
+  - **The gates are the whole perf story**: a false "needs install" also forces a rebuild (`mustInstall` implies build), so a stale gate costs two minutes-scale steps per start, not one. Keep both hashes free of platform-owned state — `buildFingerprint` skips `node_modules` **and `.git`** (a sync rewrites `.git` internals on every start with no source change), and `needsInstall` treats a missing `node_modules` as "not installed" **only when the app declares dependencies** (`npm install` creates no `node_modules` for a dependency-free package).
 - **NginxLifecycle** - `nginx` deploy type: generates per-app nginx server block (pid/log redirected into app dir), runs `nginx -t` preflight, managed by PM2 with `interpreter: 'none'` + `daemon off;`.
-- **GitLifecycle** - Git-source deploys (`app_git_source` table): clones/fetches the bound repo into the app dir (depth-1 fetch, `reset --hard`, `clean -fd` — never `-x`), runs on start / manual pull / signed GitHub push webhook, and rolls the worktree + deploy state back to the previous HEAD when fetch or npm build fails. Single-flight is a DB claim (`claimGitSync` / `finishGitSync`, stale after `GIT_STALE_SYNC_MS`), so concurrent pulls from cluster workers return `busy` instead of racing the working tree. npm apps are rebuilt via `NpmLifecycle.ensureBuilt`; only a running npm app is restarted after a sync.
+- **GitLifecycle** - Git-source deploys (`app_git_source` table): clones/fetches the bound repo into the app dir (depth-1 fetch, `reset --hard`, `clean -fd` — never `-x`), runs on start / manual pull / signed GitHub push webhook, and rolls the worktree + deploy state back to the previous HEAD when fetch or npm build fails.
+  - `cleanArgs` and `isPlatformManagedPath` exclude `GitLifecycle.platformDeployArtifacts()` (`package-lock.json`) alongside `node_modules` and the per-app nginx files: for a repo that tracks no lockfile, the one in the checkout is the platform's own `npm install` output. Deleting it flips the install fingerprint on every sync (full reinstall + forced rebuild per start) and makes `git status` report it as user dirt, which also defeats the same-commit fast path in `runClaimedSync`. Tracked lockfiles are unaffected — `clean`/`reset` never touch tracked files. Single-flight is a DB claim (`claimGitSync` / `finishGitSync`, stale after `GIT_STALE_SYNC_MS`), so concurrent pulls from cluster workers return `busy` instead of racing the working tree. npm apps are rebuilt via `NpmLifecycle.ensureBuilt`; only a running npm app is restarted after a sync.
 - **LogManager** - SSE log streaming: resolves PM2 log paths per deploy_type, tails with `fs.watch` (byte offset, line buffer, rotation reset). nginx apps tail `nginx-access.log`/`nginx-error.log`.
 - **MetricsSampler** - Resource monitoring: 10s/tick `pm2 jlist` from ONE cluster worker (`NODE_APP_INSTANCE=0`, gated in server.js); samples persist to the shared SQLite `metrics` table (pruned to newest 180/app) so every worker serves identical reads.
 - **AuthManager** - Single-admin auth: bcryptjs verify, seeds admin from env on boot.
@@ -310,3 +319,4 @@ curl http://localhost:3000  # Or assigned port
 - Frontend proxy only works in development; production needs different setup.
 - Git-source apps reject uploads; `.git` is preserved by zip replacement, hidden from listings, and excluded from backups. Never run `git clean -x` in an app dir (it would delete `node_modules`).
 - The webhook is session-less: it is authenticated only by the per-app HMAC signature, so it must be mounted before `express.json()` with the raw body and must never trust parsed JSON before verifying.
+- A start is allowed to take minutes (`GIT_TIMEOUT_MS` per git call + `NPM_INSTALL_TIMEOUT_MS` + `NPM_BUILD_TIMEOUT_MS`, and install/build run **inside** the HTTP request). So "slow deploy" reports must be attributed before being fixed: read the `[deploy-perf]` lines, or run `node scripts/diagnose-deploy-perf.js env` (read-only) / `... start <appId>` (one instrumented real start, prints per-boundary ms plus why each gate fired). Every lifecycle op also pays a PM2 CLI spawn (~0.2–1.2s) — calls slower than `ProcessManager.PM2_SLOW_MS` are logged individually.
