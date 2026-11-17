@@ -114,12 +114,14 @@ git commit -m "feat(db): add app_deploy_job table and single-flight claim querie
   - `DeployJobs.STEPS = ['queued','validate','git','install','build','launch','proxy','done']`
   - `DeployJobs.LOG_RETENTION = 5`
   - `DeployJobs.logDir() -> string`（`<repoRoot>/data/deploy-logs`）
-  - `DeployJobs.claim(app, kind) -> Promise<{ ok: boolean, reason?: 'busy'|'updating', job?: object }>`
+  - `DeployJobs.claim(app, kind) -> Promise<{ ok: boolean, reason?: 'busy'|'updating'|'gone', job?: object }>`
     **抢到锁之后**才创建日志文件（`deploy-logs/<app.name>-<epochMs>.log`）并把路径写进 `job.log_path`；
     创建失败时 `log_path` 为 `null` 且**任务照常抢到**（Review Focus 4/5）—— 调用方永远不自己造文件。
     **抢锁查询抛错时按"没抢到"处理**：`SQLITE_BUSY` / `SQLITE_BUSY_SNAPSHOT` → `{ ok:false, reason:'busy' }`；
-    其它错误照常上抛（不能把真的 DB 故障伪装成"别人在部署"）。平台没设 `busy_timeout`/WAL，
-    所以并发写者拿到的是异常而不是干净的 `changes===0` —— 这是 Task 1 审查确认的现状。
+    其它错误照常上抛（不能把真的 DB 故障伪装成"别人在部署"）。
+    注意事实校正：node-sqlite3 的绑定**自带隐式 1000ms busy handler**（不是"完全没设"），
+    所以争用时已经是"等 1 秒再抛"；`PRAGMA busy_timeout = 5000` 只是把这个既有等待放宽，
+    捕获 `SQLITE_BUSY` 才是真正兜住这条路径的东西。
   - `DeployJobs.advance(appId, step) -> Promise<void>`（无活跃行时 no-op；只写自己 pid 的行）
   - `DeployJobs.finish(appId, { ok, message = null }) -> Promise<void>`（`ok` → `succeeded`/`failed` + `finished_at`；
     同样带 pid fencing）
@@ -138,7 +140,7 @@ test('finishDeployJob by a foreign pid does not terminate the current owner\'s j
   // A claim（pid=process.pid）→ 手工把行 pid 改成别的数模拟"被偷"→ 用原 pid 调 finish → 行仍 running
 test('updateDeployJobStep by a foreign pid changes nothing', ...)
 test('the db connection is opened with a busy_timeout so a contended writer waits instead of throwing', ...)
-  // 读回 `PRAGMA busy_timeout` 断言非 0（默认无 busy handler 时它是 0）
+  // 读回 `PRAGMA busy_timeout`，断言 **>= 5000**：驱动自带 1000ms，所以"非 0"是不改代码也会绿的假绿灯
 ```
 
 - [ ] **Step 1: 写失败测试** —— 断言以下行为（`ProcessManager.pm2Exec` 已由 helper stub，无需再管）：
@@ -361,9 +363,8 @@ test('deployApp rejection never produces an unhandled rejection', ...)
 
 - [ ] **Step 2: 跑测试确认失败** — Run: `cd server && node --test src/test/integration/deploy-async-start.test.js`；Expected: FAIL（现在返回 200/400）
 
-  **`job === null` 是合法返回**（Task 2 的接口事实）：应用在"抢到锁之后、读回行之前"被删掉时，`claim()` 返回
-  `{ ok:true, job:null }`。此时**不发 202，也不起后台任务** —— 直接按"应用已不存在"走 404/409 分支即可。
-  若忽略这个分支，后台任务会拿着一个没有行的 app 跑完整条部署。
+  **应用在"抢到锁之后、读回行之前"被删掉时，`claim()` 返回 `{ ok:false, reason:'gone' }`**（Task 2 落地的契约，
+  见下方 Ruling）：路由按 404 处理，**不发 202、不起后台任务**。
 
 - [ ] **Step 3: 实现** —— 路由里先做决策 7 的同步前置（顺序：取应用 → `DeployJobs.assertIdle` → 对账 + already-running → 未绑 git 才 `validateAppDeployment` → `isSyncInProgress` → `claim` → `202` → `startBackground`）。原 `isClientError` 那一长串字符串匹配**保留**给同步前置用，但 install/build/git 类失败从这条路径消失（它们已在后台）。`deploy-runner.js` 独立成文件，因为路由文件已经 660 行，且 webhook 侧未来可复用。
 
