@@ -26,6 +26,15 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 // Enable foreign keys
 db.run('PRAGMA foreign_keys = ON');
 
+// Contended writers must wait, not throw. The platform runs under PM2 cluster
+// and async deploy jobs deliberately raise cross-worker write contention on
+// app_deploy_job. node-sqlite3 ships an implicit 1000ms busy handler; we raise
+// it explicitly to 5000ms so a claim racing an in-flight write gets a clean
+// changes=0 instead of an SQLITE_BUSY rejection. This is platform-wide: it
+// only turns "fail immediately" into "wait up to 5s, then still fail" — no new
+// failure mode is introduced.
+db.run('PRAGMA busy_timeout = 5000');
+
 // Promise wrapper for database operations
 const dbRun = (sql, params = []) => {
   return new Promise((resolve, reject) => {
@@ -216,9 +225,20 @@ const queries = {
 
   // Advance the in-flight job's progress step. Returns the dbRun result so
   // callers/tests can observe a no-op (changes=0 on a missing row).
-  updateDeployJobStep: (appId, step) => dbRun(
-    'UPDATE app_deploy_job SET step = ? WHERE app_id = ?',
-    [step, appId]
+  // Owner-fenced (`AND pid = ?`): a job stolen through the stale window must
+  // not be steppable by the original owner still running with its old handle —
+  // DeployJobs passes process.pid so only the current pid-owner's writes land.
+  updateDeployJobStep: (appId, step, pid) => dbRun(
+    'UPDATE app_deploy_job SET step = ? WHERE app_id = ? AND pid = ?',
+    [step, appId, pid]
+  ),
+
+  // Fenced write of the job's log path (same ownership rule as step/finish).
+  // DeployJobs.claim passes null to retract a path whose file could not be
+  // created — a missing log file must never masquerade as a readable one.
+  setDeployJobLogPath: (appId, logPath, pid) => dbRun(
+    'UPDATE app_deploy_job SET log_path = ? WHERE app_id = ? AND pid = ?',
+    [logPath ?? null, appId, pid]
   ),
 
   // Record the terminal outcome and release the lock. message defaults to
@@ -226,13 +246,15 @@ const queries = {
   // A plain UPDATE — a row already gone (app deleted mid-job) is a silent
   // no-op, never a throw, because fire-and-forget jobs must not crash on
   // losing the finish race against deleteApp's cascade.
-  finishDeployJob: (appId, { status, message } = {}) => dbRun(
+  // Owner-fenced (`AND pid = ?`): without it, the previous owner of a stolen
+  // stale job could terminate the NEW owner's in-flight run on its way out.
+  finishDeployJob: (appId, { status, message, pid } = {}) => dbRun(
     `UPDATE app_deploy_job SET
        status = ?,
        message = ?,
        finished_at = CURRENT_TIMESTAMP
-     WHERE app_id = ?`,
-    [status, message ?? null, appId]
+     WHERE app_id = ? AND pid = ?`,
+    [status, message ?? null, appId, pid]
   ),
 
   // Jobs still 'running' — boot-time convergence input (crashed worker left
