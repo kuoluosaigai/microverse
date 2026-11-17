@@ -103,7 +103,9 @@ git commit -m "feat(db): add app_deploy_job table and single-flight claim querie
 
 **Files:**
 - Create: `server/src/services/deploy-jobs.js`
+- Modify: `server/src/db/index.js`（给 `updateDeployJobStep` / `finishDeployJob` 加 **owner fencing**：WHERE 追加 `AND pid = ?`）
 - Test: `server/src/test/unit/deploy-jobs-state.test.js`（新建）
+- Test: `server/src/test/unit/deploy-job-claim.test.js`（补 fencing 两条断言）
 
 **Interfaces:**
 - Consumes: Task 1 的全部 `queries.*DeployJob*`、`config.deployment.deployJobStaleMs`
@@ -115,25 +117,44 @@ git commit -m "feat(db): add app_deploy_job table and single-flight claim querie
   - `DeployJobs.claim(app, kind) -> Promise<{ ok: boolean, reason?: 'busy'|'updating', job?: object }>`
     **抢到锁之后**才创建日志文件（`deploy-logs/<app.name>-<epochMs>.log`）并把路径写进 `job.log_path`；
     创建失败时 `log_path` 为 `null` 且**任务照常抢到**（Review Focus 4/5）—— 调用方永远不自己造文件。
-  - `DeployJobs.advance(appId, step) -> Promise<void>`（无活跃行时 no-op）
-  - `DeployJobs.finish(appId, { ok, message = null }) -> Promise<void>`（`ok` → `succeeded`/`failed` + `finished_at`）
+    **抢锁查询抛错时按"没抢到"处理**：`SQLITE_BUSY` / `SQLITE_BUSY_SNAPSHOT` → `{ ok:false, reason:'busy' }`；
+    其它错误照常上抛（不能把真的 DB 故障伪装成"别人在部署"）。平台没设 `busy_timeout`/WAL，
+    所以并发写者拿到的是异常而不是干净的 `changes===0` —— 这是 Task 1 审查确认的现状。
+  - `DeployJobs.advance(appId, step) -> Promise<void>`（无活跃行时 no-op；只写自己 pid 的行）
+  - `DeployJobs.finish(appId, { ok, message = null }) -> Promise<void>`（`ok` → `succeeded`/`failed` + `finished_at`；
+    同样带 pid fencing）
+  - `DeployJobs.pid` 概念：**fencing 的期望 pid 由 `DeployJobs` 内部用 `process.pid` 提供**，不进入调用方可见的签名
   - `DeployJobs.isLive(job, now = Date.now()) -> boolean`（同步：status 非终态 且 pid 存活 且 未陈旧）
   - `DeployJobs.activeJob(appId) -> Promise<object|null>`（非终态且 `isLive`）
   - `DeployJobs.assertIdle(appId, action) -> Promise<void>`（不空闲则抛 `Error`，`err.status = 409`，消息见下）
   - `DeployJobs.tail(appId, { lines = 200, maxBytes = 65536 }) -> Promise<string[]>`
   - `DeployJobs.pruneLogs(appName, keep = LOG_RETENTION) -> Promise<void>`
 
+- [ ] **Step 0: 先写 fencing 与 busy 的失败测试**（Task 1 审查提出的两个真实缺口，不补就等于把
+  "陈旧任务被偷走后原任务还在跑"的收尾权交给上一个主人，并把签名承诺的 `Promise<boolean>` 留在争用下会破的谎上）：
+
+```js
+test('finishDeployJob by a foreign pid does not terminate the current owner\'s job', ...)
+  // A claim（pid=process.pid）→ 手工把行 pid 改成别的数模拟"被偷"→ 用原 pid 调 finish → 行仍 running
+test('updateDeployJobStep by a foreign pid changes nothing', ...)
+test('the db connection is opened with a busy_timeout so a contended writer waits instead of throwing', ...)
+  // 读回 `PRAGMA busy_timeout` 断言非 0（默认无 busy handler 时它是 0）
+```
+
 - [ ] **Step 1: 写失败测试** —— 断言以下行为（`ProcessManager.pm2Exec` 已由 helper stub，无需再管）：
 
 ```js
 test('claim creates the log file and advances queued→…→done persisting each step', ...)
 test('claim returns busy when a live job holds the app', ...)     // reason==='busy'
+test('claim returns busy when the claim query throws SQLITE_BUSY', ...)
+  // mock queries.claimDeployJob 抛 {code:'SQLITE_BUSY'} → {ok:false,reason:'busy'}，且不创建日志文件
+test('claim rethrows an unrelated DB failure', ...)
+  // mock 抛 {code:'SQLITE_CANTOPEN'} → 断言 claim 也抛（不得伪装成 busy）
 test('claim returns updating when a live update.lock is held', ...) // reason==='updating'（复用 UpdateManager.isUpdateRunning，注入 scope 覆盖）
-test('advance and finish are silent no-ops when the row vanished', ...)  // Review Focus 3：claim 后手工删应用再 advance/finish 不抛
+test('advance and finish are silent no-ops when the row vanished', ...)  // Review Focus 3
 test('isLive is false for a dead pid even inside the stale window', ...) // Review Focus 1：mock process.kill 抛 ESRCH
 test('isLive is false once the stale window passes despite a live pid', ...)
 test('assertIdle throws a 409-stamped error naming the current step', ...)
-  // err.status===409；message 含 step 名与 kind
 test('tail strips ANSI escapes and caps lines and bytes', ...)
 test('tail returns [] when the log file does not exist', ...)      // Review Focus 4
 test('claim still succeeds with log_path=null when the log directory cannot be created', ...)
@@ -155,10 +176,21 @@ Expected: FAIL — `Cannot find module '../../services/deploy-jobs'`
 Run: `cd server && node --test src/test/unit/deploy-jobs-state.test.js`
 Expected: PASS（12 tests）
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: owner fencing + busy 等待（Task 1 审查提出的两个缺口）**
+  1. `updateDeployJobStep` / `finishDeployJob` 的 `WHERE` 追加 `AND pid = ?`，期望值由 `DeployJobs` 内部用
+     `process.pid` 提供，不进调用方签名。没有它，一个被判陈旧而偷走的任务的原主人仍能在自己跑完时把**新主人**的
+     任务写成终态。
+  2. 在 `server/src/db/index.js:27`（`PRAGMA foreign_keys = ON` 旁）加 `PRAGMA busy_timeout = 5000`。
+     平台跑在 cluster 下且本特性会**主动提高**跨 worker 抢锁频率，而 node-sqlite3 默认没有 busy handler，
+     争用时 `dbRun` 直接 reject，`claimDeployJob` 的 `Promise<boolean>` 契约多出签名外的第三种结果。
+     设了它，争用写者会等待后拿到干净的 `changes===0` 失败；Task 2 的 `claim()` 仍保留把 `SQLITE_BUSY`
+     映射成"没抢到"作为第二道防线（见 Interfaces）。**这是一处平台级改动**，影响所有写操作，因此必须单独说明：
+     它只会把"立刻抛错"变成"最多等 5 秒后仍失败"，不引入新的失败模式。
+
+- [ ] **Step 6: 提交**
 
 ```bash
-git add server/src/services/deploy-jobs.js server/src/test/unit/deploy-jobs-state.test.js
+git add server/src/services/deploy-jobs.js server/src/db/index.js server/src/test/unit/deploy-jobs-state.test.js server/src/test/unit/deploy-job-claim.test.js
 git commit -m "feat(deploy): add DeployJobs owning job state and log files"
 ```
 
