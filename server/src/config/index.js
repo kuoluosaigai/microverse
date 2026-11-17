@@ -60,6 +60,12 @@ const config = {
     npmInstallTimeoutMs: intFromEnv('NPM_INSTALL_TIMEOUT_MS', 300000),
     npmBuildTimeoutMs: intFromEnv('NPM_BUILD_TIMEOUT_MS', 300000),
 
+    // Async deploy jobs: a 'running' job whose started_at is older than this
+    // is treated as abandoned (crashed worker) and the next claim may take it
+    // over. Default 2400000 (40 min) — >3x the worst-case deploy budget
+    // (~11 min) so a slow-but-alive job is never stolen while running.
+    deployJobStaleMs: intFromEnv('DEPLOY_JOB_STALE_MS', 2400000),
+
     // nginx binary path (default 'nginx' = PATH; set NGINX_BIN for non-PATH installs)
     nginxBin: process.env.NGINX_BIN || 'nginx',
 

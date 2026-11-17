@@ -176,6 +176,79 @@ const queries = {
     return dbAll('SELECT key, value FROM app_env WHERE app_id = ? ORDER BY id', [appId]);
   },
 
+  // Deploy-job queries (see app_deploy_job in schema.sql)
+  // Single-flight claim for async deploys (start / git pull). One statement,
+  // atomic under SQLite's single writer, so only one cluster worker can win:
+  // no row yet -> INSERT a running job; a terminal (succeeded/failed) or
+  // started_at-older-than-staleMs row -> DO UPDATE takes it over (crashed
+  // worker recovery); a live fresh row -> the WHERE skips the update and
+  // changes=0 reports the loss. This is INSERT..ON CONFLICT, NOT the
+  // plain-UPDATE polarity of claimGitSync below — app_git_source already has
+  // a row when it claims, but app_deploy_job has none before an app's first
+  // deploy, and a pure UPDATE could never create it.
+  claimDeployJob: async ({ appId, kind, pid, logPath, staleMs }) => {
+    const modifier = `-${Math.max(1, Math.floor(staleMs / 1000))} seconds`;
+    const result = await dbRun(
+      `INSERT INTO app_deploy_job (app_id, kind, status, step, pid, started_at, log_path)
+            VALUES (?, ?, 'running', 'queued', ?, CURRENT_TIMESTAMP, ?)
+       ON CONFLICT(app_id) DO UPDATE
+          SET kind = excluded.kind,
+              status = 'running',
+              step = 'queued',
+              message = NULL,
+              pid = excluded.pid,
+              started_at = CURRENT_TIMESTAMP,
+              log_path = excluded.log_path,
+              finished_at = NULL
+        WHERE app_deploy_job.status IN ('succeeded', 'failed')
+           OR app_deploy_job.started_at < datetime('now', ?)`,
+      [appId, kind, pid, logPath, modifier]
+    );
+    return result.changes > 0;
+  },
+
+  // Current/most-recent job for an app, or null. Normalised to null (dbGet
+  // yields undefined) because the API summary contract is `deploy: null`.
+  getDeployJob: async (appId) => {
+    const row = await dbGet('SELECT * FROM app_deploy_job WHERE app_id = ?', [appId]);
+    return row ?? null;
+  },
+
+  // Advance the in-flight job's progress step. Returns the dbRun result so
+  // callers/tests can observe a no-op (changes=0 on a missing row).
+  updateDeployJobStep: (appId, step) => dbRun(
+    'UPDATE app_deploy_job SET step = ? WHERE app_id = ?',
+    [step, appId]
+  ),
+
+  // Record the terminal outcome and release the lock. message defaults to
+  // null, so finish({status:'succeeded'}) also wipes any stale failure text.
+  // A plain UPDATE — a row already gone (app deleted mid-job) is a silent
+  // no-op, never a throw, because fire-and-forget jobs must not crash on
+  // losing the finish race against deleteApp's cascade.
+  finishDeployJob: (appId, { status, message } = {}) => dbRun(
+    `UPDATE app_deploy_job SET
+       status = ?,
+       message = ?,
+       finished_at = CURRENT_TIMESTAMP
+     WHERE app_id = ?`,
+    [status, message ?? null, appId]
+  ),
+
+  // Jobs still 'running' — boot-time convergence input (crashed worker left
+  // claims behind; reconcileOnBoot turns them terminal).
+  listNonTerminalDeployJobs: () => dbAll(
+    "SELECT * FROM app_deploy_job WHERE status NOT IN ('succeeded', 'failed')"
+  ),
+
+  // Batch read for the app-list summary (one query, never per-app N+1).
+  // Empty input short-circuits: `WHERE app_id IN ()` is a syntax error.
+  getDeployJobsByAppIds: async (appIds) => {
+    if (!appIds.length) return [];
+    const placeholders = appIds.map(() => '?').join(', ');
+    return dbAll(`SELECT * FROM app_deploy_job WHERE app_id IN (${placeholders})`, appIds);
+  },
+
   // Git-source queries (see app_git_source in schema.sql)
   getAppGitSource: (appId) => dbGet('SELECT * FROM app_git_source WHERE app_id = ?', [appId]),
 

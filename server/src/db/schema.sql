@@ -127,3 +127,32 @@ CREATE TABLE IF NOT EXISTS app_git_source (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
 );
+
+-- Async deploy jobs (start / git pull): ONE row per app holding the current
+-- or most recent job — same shape as app_deploy_state/app_git_source, so the
+-- UI summary and the single-flight claim stay trivial. Deploy *history* is
+-- deliberately not here: it lives in the job's log file ([deploy-perf] lines).
+--
+-- `status` doubles as the cross-worker lock: 'running' with a fresh
+-- started_at means an in-flight job holds the app; 'succeeded'/'failed' are
+-- terminal and re-claimable. There is NO 'queued' status — winning a claim
+-- means the job is running; the queue-wait is expressed by step='queued'.
+--
+-- The claim (queries.claimDeployJob) must NOT copy claimGitSync's plain-UPDATE
+-- polarity: app_git_source already has a row by the time it claims, but
+-- app_deploy_job does not exist for an app until its first deploy — a pure
+-- UPDATE could never win that first claim. Hence INSERT ... ON CONFLICT DO
+-- UPDATE ... WHERE (terminal OR stale), whose skipped update (changes=0) is
+-- itself the single-flight signal. Cascades with the app row.
+CREATE TABLE IF NOT EXISTS app_deploy_job (
+  app_id      INTEGER PRIMARY KEY,   -- an app has at most one job: current or most recent
+  kind        TEXT NOT NULL,         -- 'start' | 'pull'
+  status      TEXT NOT NULL,         -- 'running' | 'succeeded' | 'failed' (terminal values free the lock)
+  step        TEXT,                  -- 'queued' | validate | git | install | build | launch | proxy | done
+  message     TEXT,                  -- failure summary for inline UI display at terminal status
+  log_path    TEXT,                  -- data/deploy-logs/<app>-<epoch>.log
+  pid         INTEGER,               -- process that owns the job; used for liveness checks
+  started_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME,
+  FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+);
