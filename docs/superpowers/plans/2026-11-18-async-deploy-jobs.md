@@ -215,11 +215,23 @@ test('reconcileOnBoot leaves a live job alone (another cluster worker owns it)',
   // pid = process.pid（必然存活）→ status 仍 running，converged===0
 test('reconcileOnBoot converges a live-pid job only once it is stale', ...)
 test('reconcileOnBoot reports a count and is idempotent when run twice', ...)
+test('reconcileOnBoot writes through the row\'s own pid, not the booting process\'s', ...)
+  // 本任务的命门：造一行 pid=一个不存在的数，跑收敛，断言行真的变成 failed
+  // （若实现误用了 DeployJobs.finish / process.pid，这条会红 —— 上一条"存活"测试无法暴露该错误）
+test('listNonTerminalDeployJobs returns only running rows and [] when there are none', ...)
+  // 补 Task 1 审查的 Minor 1：该查询是收敛的唯一入口，此前无提交测试
 ```
 
 - [ ] **Step 2: 跑测试确认失败** — Run: `cd server && node --test src/test/unit/deploy-jobs-boot.test.js`；Expected: FAIL — `reconcileOnBoot is not a function`
 
 - [ ] **Step 3: 实现并在 `server.js` 接线** —— 只收敛 `listNonTerminalDeployJobs()` 返回的行，`message` 固定中文 `部署被中断（平台重启）`（Task 11 的前端只显示，不翻译该字符串；与 `[git]` 那些 console 前缀同级）。调用处包 `.catch(err => console.warn(...))`，**启动不能因为收敛失败而死**。
+
+  **必须绕开 `DeployJobs.finish`（Task 2 的接口事实，brief 里原本没写）**：Task 2 把 owner fencing 做成了查询层的无条件
+  `AND pid = ?`，而 `finish()` 内部固定传 `process.pid` —— 重启后的新进程 pid 永远匹配不上崩溃者的行，
+  用它收敛会一条都改不动。所以 `reconcileOnBoot` 直接调查询层并**显式传该行自己的 pid**：
+  `queries.finishDeployJob(appId, { status: 'failed', message: '部署被中断（平台重启）', pid: row.pid })`
+  —— 注意 pid 在第二个参数的对象**里面**（Task 2 落地后的真实签名），不是第三个位置参数。
+  这样 fencing 仍是默认行为，只有"启动收敛"这一个例外用行自带的 pid 自我认证。
 
 - [ ] **Step 4: 跑测试确认通过** — Expected: PASS（4 tests）
 
@@ -348,6 +360,10 @@ test('deployApp rejection never produces an unhandled rejection', ...)
 ```
 
 - [ ] **Step 2: 跑测试确认失败** — Run: `cd server && node --test src/test/integration/deploy-async-start.test.js`；Expected: FAIL（现在返回 200/400）
+
+  **`job === null` 是合法返回**（Task 2 的接口事实）：应用在"抢到锁之后、读回行之前"被删掉时，`claim()` 返回
+  `{ ok:true, job:null }`。此时**不发 202，也不起后台任务** —— 直接按"应用已不存在"走 404/409 分支即可。
+  若忽略这个分支，后台任务会拿着一个没有行的 app 跑完整条部署。
 
 - [ ] **Step 3: 实现** —— 路由里先做决策 7 的同步前置（顺序：取应用 → `DeployJobs.assertIdle` → 对账 + already-running → 未绑 git 才 `validateAppDeployment` → `isSyncInProgress` → `claim` → `202` → `startBackground`）。原 `isClientError` 那一长串字符串匹配**保留**给同步前置用，但 install/build/git 类失败从这条路径消失（它们已在后台）。`deploy-runner.js` 独立成文件，因为路由文件已经 660 行，且 webhook 侧未来可复用。
 
