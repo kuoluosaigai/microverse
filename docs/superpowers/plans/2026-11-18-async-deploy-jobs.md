@@ -29,11 +29,11 @@
 
 规格隐含、但没有任何一个任务的测试天然覆盖的失效模式 —— 每条在括号里标出负责它的任务，实现时必须有对应测试：
 
-1. **陈旧阈值内的死 pid**：worker 崩溃后应用必须**立刻**可再次部署，而不是 409 到 40 分钟为止（Task 3、Task 4）。
-2. **绑定 git 的应用在 clone 前目录是空的**：同步前置校验必须跳过它，否则会误报"缺 index.html"（Task 8）。
-3. **写状态时应用已被删除**（`ON DELETE CASCADE` 连带删了任务行）：所有任务状态写入必须是静默 no-op，不抛错、不复活行（Task 2、Task 4）。
-4. **日志目录不可写**：部署必须照常跑完，只是没有日志（`logTail` 为空数组），绝不能因为日志失败让部署失败（Task 2、Task 6）。
-5. **两个 cluster worker 同时抢同一个应用**：只有一个 claim 成功，输家不得删除或截断赢家的日志文件（Task 4）。
+1. **陈旧阈值内的死 pid**：worker 崩溃后应用必须**立刻**可再次部署，而不是 409 到 40 分钟为止（Task 2 `isLive`、Task 3 `reconcileOnBoot`、Task 7 路由级）。
+2. **绑定 git 的应用在 clone 前目录是空的**：同步前置校验必须跳过它，否则会误报"缺 index.html"（Task 6 的前置检查）。
+3. **写状态时应用已被删除**（`ON DELETE CASCADE` 连带删了任务行）：所有任务状态写入必须是静默 no-op，不抛错、不复活行（Task 2）。
+4. **日志目录不可写**：部署必须照常跑完，只是没有日志（`logTail` 为空数组），绝不能因为日志失败让部署失败（Task 2 建目录失败 + `tail` 缺失，Task 4 装不上日志不影响安装成功）。
+5. **两个 cluster worker 同时抢同一个应用**：只有一个 claim 成功，输家不得创建、删除或截断赢家的日志文件（Task 2 —— 日志文件的创建归 `claim` 所有）。
 
 ---
 
@@ -87,7 +87,7 @@ Expected: FAIL — `queries.claimDeployJob is not a function`
 - [ ] **Step 4: 再跑测试确认通过**（"陈旧窗口"两条测试需要一个把 `started_at` 改旧的手段 —— 直接用 `dbRun("UPDATE app_deploy_job SET started_at = datetime('now','-9999 seconds') WHERE app_id=?")`，不要为测试在生产代码里开口子）
 
 Run: `cd server && node --test src/test/unit/deploy-job-claim.test.js`
-Expected: PASS（6 tests）
+Expected: PASS（7 tests）
 
 - [ ] **Step 5: 配置项 + 全量回归 + 提交**
 
@@ -112,8 +112,9 @@ git commit -m "feat(db): add app_deploy_job table and single-flight claim querie
   - `DeployJobs.STEPS = ['queued','validate','git','install','build','launch','proxy','done']`
   - `DeployJobs.LOG_RETENTION = 5`
   - `DeployJobs.logDir() -> string`（`<repoRoot>/data/deploy-logs`）
-  - `DeployJobs.newLogFile(app) -> string|null`（绝对路径 `deploy-logs/<app.name>-<epochMs>.log`；**建目录失败时返回 null 而不是抛**）
-  - `DeployJobs.claim(app, kind, { logFile }) -> Promise<{ ok: boolean, reason?: 'busy'|'updating', job?: object }>`
+  - `DeployJobs.claim(app, kind) -> Promise<{ ok: boolean, reason?: 'busy'|'updating', job?: object }>`
+    **抢到锁之后**才创建日志文件（`deploy-logs/<app.name>-<epochMs>.log`）并把路径写进 `job.log_path`；
+    创建失败时 `log_path` 为 `null` 且**任务照常抢到**（Review Focus 4/5）—— 调用方永远不自己造文件。
   - `DeployJobs.advance(appId, step) -> Promise<void>`（无活跃行时 no-op）
   - `DeployJobs.finish(appId, { ok, message = null }) -> Promise<void>`（`ok` → `succeeded`/`failed` + `finished_at`）
   - `DeployJobs.isLive(job, now = Date.now()) -> boolean`（同步：status 非终态 且 pid 存活 且 未陈旧）
@@ -135,8 +136,10 @@ test('assertIdle throws a 409-stamped error naming the current step', ...)
   // err.status===409；message 含 step 名与 kind
 test('tail strips ANSI escapes and caps lines and bytes', ...)
 test('tail returns [] when the log file does not exist', ...)      // Review Focus 4
-test('newLogFile returns null when the log directory cannot be created', ...)
-  // 把 data/deploy-logs 做成一个普通文件 → null，且不抛
+test('claim still succeeds with log_path=null when the log directory cannot be created', ...)
+  // 把 data/deploy-logs 做成一个普通文件 → ok===true 且 job.log_path===null，不抛（Review Focus 4）
+test('a losing claim creates no log file at all', ...)
+  // 已有活任务时再 claim → ok===false，且日志目录里没有新文件（Review Focus 5）
 test('pruneLogs keeps the newest N and leaves other apps alone', ...)
 ```
 
@@ -201,7 +204,6 @@ git commit -m "feat(deploy): converge interrupted deploy jobs at boot"
 
 **Files:**
 - Modify: `server/src/services/npm-lifecycle.js`（`npmExec`、`install`、`build`、`ensureBuilt`）
-- Modify: `server/src/services/deploy-jobs.js`（`claim` 里补日志文件竞争处理）
 - Test: `server/src/test/unit/npm-output-capture.test.js`（新建）
 
 **Interfaces:**
@@ -232,12 +234,10 @@ test('an unopenable log file degrades to no logging, not a failed install', ...)
 
 - [ ] **Step 4: 跑测试确认通过 + 全量回归** — `cd server && node --test src/test/unit/npm-output-capture.test.js && npm test`；Expected: PASS；全量 345+ 全绿（`npm-deploy-gating.test.js` 那 4 条尤其不能松动）
 
-- [ ] **Step 5: `claim` 的日志文件归属（Review Focus 5）** —— 输家不得删赢家文件：`claim()` 拿到 `ok:false` 时**不创建也不清理**任何文件（当前实现若已"先 newLogFile 再 claim"，改成先 claim 再 newLogFile，并补一条测试断言输家路径上没有新文件）。
-
-- [ ] **Step 6: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
-git add server/src/services/npm-lifecycle.js server/src/services/deploy-jobs.js server/src/test/unit/npm-output-capture.test.js
+git add server/src/services/npm-lifecycle.js server/src/test/unit/npm-output-capture.test.js
 git commit -m "feat(npm): capture install/build output into a job log file"
 ```
 
@@ -292,9 +292,9 @@ git commit -m "feat(deploy): let deployApp report its progress steps to a caller
 - Test: `server/src/test/integration/deploy-async-start.test.js`（新建）
 
 **Interfaces:**
-- Consumes: Task 2 的 `DeployJobs.claim` / `advance` / `finish` / `newLogFile`；Task 5 的 `DeployManager.deployApp(appId, { onStep, logFile })`
+- Consumes: Task 2 的 `DeployJobs.claim`（返回 `job.log_path`）/ `advance` / `finish`；Task 5 的 `DeployManager.deployApp(appId, { onStep, logFile })`
 - Produces:
-  - `DeployRunner.startBackground(app, kind, workFn) -> void`（fire-and-forget；`workFn(ctx)` 收到 `ctx = { report: (step) => void, logFile: string|null }`，其中 `report` 内部就是 `(step) => DeployJobs.advance(app.id, step)`；任何异常收敛成 `finish({ok:false})`，绝不产生 unhandled rejection）
+  - `DeployRunner.startBackground(app, kind, job, workFn) -> void`（fire-and-forget；`job` 为 Task 2 `claim` 的返回行，`workFn(ctx)` 收到 `ctx = { report: (step) => void, logFile: job.log_path }`，其中 `report` 内部就是 `(step) => DeployJobs.advance(app.id, step)`；任何异常收敛成 `finish({ok:false})`，绝不产生 unhandled rejection）
   - **命名钉死**：`DeployRunner` 对外只有 `report`，`deployApp`/`sync` 的参数名只有 `onStep`。路由里写 `deployApp(app.id, { onStep: ctx.report, logFile: ctx.logFile })`，不要发明第三个名字。
   - HTTP：`202 { success:true, data:{ app_id, kind, status:'running' } }`；`409`（任务忙 / git claim 忙 / 平台自更新中）；`400`（app 不存在以外的既有 4xx，见 Step 1）；`404`
 
@@ -362,7 +362,7 @@ test('a dead-pid job does not hold the guard', ...)
 
 - [ ] **Step 3: 实现** —— 每个受保护 handler 在业务动作之前 `await DeployJobs.assertIdle(app.id, '<动作中文名>')`；错误映射沿用各文件里既有的 `if (error.message === 'Update in progress') return sendError(res, 409, ...)` 形状：新增 `err.status === 409` 的通用分支（`apps.js` 里在 `next(error)` 之前判 `error.status === 409`）。`deleteApp` 的保护必须放在 `AppManager.deleteApp` 之前，否则 CASCADE 会连着任务行一起删（决策 3 的原由）。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（11 tests）；全量绿
+- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（12 tests）；全量绿
 
 - [ ] **Step 5: 提交**
 
