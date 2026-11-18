@@ -1,4 +1,4 @@
-const { exec, execFile } = require('child_process');
+const { exec, execFile, spawn } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
@@ -155,15 +155,18 @@ class NpmLifecycle {
    * dependencies/build output must still be repaired after the failed attempt.
    * @param {number} appId
    * @param {string} appPath
-   * @param {{ force?: boolean }} [options]
+   * @param {{ force?: boolean, logFile?: string|null }} [options] logFile is
+   *   the deploy job's log path (DeployJobs.claim() created it); install/build
+   *   output streams into it so a background job's transcript survives on disk.
+   *   null/undefined keeps the old in-memory-buffered behavior.
    */
-  static async ensureBuilt(appId, appPath, { force = false } = {}) {
+  static async ensureBuilt(appId, appPath, { force = false, logFile = null } = {}) {
     const scope = path.basename(appPath);
     const state = await queries.getAppDeployState(appId);
     const mustInstall = force || this.needsInstall(appPath, state && state.install_fp);
     const installStartedAt = Date.now();
     if (mustInstall) {
-      await this.install(appPath);
+      await this.install(appPath, { logFile });
       await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
       perfLine(scope, 'npm install', Date.now() - installStartedAt);
     } else {
@@ -172,7 +175,7 @@ class NpmLifecycle {
     const mustBuild = force || mustInstall || this.needsBuild(appPath, state && state.build_fp);
     const buildStartedAt = Date.now();
     if (mustBuild) {
-      await this.build(appPath); // no-op when there is no build script
+      await this.build(appPath, { logFile }); // no-op when there is no build script
       await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
       perfLine(scope, 'npm run build', Date.now() - buildStartedAt);
     } else {
@@ -187,19 +190,142 @@ class NpmLifecycle {
    * refuses to execFile without a shell. Falls back to a shell string only
    * when the entry is unresolvable — the command is then a fixed platform
    * string (no user input), the shell merely supplies PATH resolution.
+   *
+   * With `options.logFile` the child runs through spawn with stdout/stderr
+   * attached to that file's fd instead: a real `npm install` can outgrow any
+   * in-memory maxBuffer, and a background deploy job must leave its transcript
+   * on disk for the operator. Failure messages then read their tail back from
+   * the file (see readOutputTail). If the file cannot be opened we degrade to
+   * the buffered path — a logging problem must never fail an install (Review
+   * Focus 4). The shell fallback does not exist in the logFile path: the
+   * no-shell rule (argument injection, see ProcessManager.pm2Exec) applies
+   * here, and a host where npm-cli.js is unresolvable surfaces that as a
+   * normal spawn error instead of being papered over with cmd.exe.
+   * @param {string[]} args npm CLI arguments
+   * @param {{ cwd?: string, timeout?: number, maxBuffer?: number, logFile?: string|null }} options
    */
   static async npmExec(args, options = {}) {
+    const { logFile, ...execOptions } = options;
     const npmCli = ProcessManager.getNpmCliPath();
-    if (npmCli !== 'npm') {
-      return execFilePromise(process.execPath, [npmCli, ...args], options);
+
+    let fd = null;
+    if (logFile) {
+      try {
+        fd = fs.openSync(logFile, 'a');
+      } catch (_err) {
+        fd = null; // unopenable/unwritable log -> buffered run, never an error
+      }
     }
-    return execPromise(`npm ${args.map(a => `"${a}"`).join(' ')}`, options);
+    if (fd !== null) {
+      try {
+        return await this.spawnToLogFile(args, execOptions, npmCli, logFile, fd);
+      } finally {
+        // Closed on EVERY path (success, npm failure, timeout/kill). The child
+        // holds its own inherited dup; the parent must not keep the fd — and
+        // with it the log file — alive past the run.
+        try {
+          fs.closeSync(fd);
+        } catch (_err) {
+          // ignore close errors
+        }
+      }
+    }
+
+    if (npmCli !== 'npm') {
+      return execFilePromise(process.execPath, [npmCli, ...args], execOptions);
+    }
+    return execPromise(`npm ${args.map(a => `"${a}"`).join(' ')}`, execOptions);
+  }
+
+  /**
+   * spawn() npm with both output channels on an inherited fd (no shell —
+   * never `{ shell: true }`, see npmExec). Resolves like execFile with empty
+   * channels (the transcript is on disk, not in memory) and rejects with an
+   * execFile-shaped error so install()/build() keep their exact catch-side
+   * contracts: `.killed` for timeouts, and a readable tail in `.stderr` —
+   * here read back from the log file, since the child wrote nothing to any
+   * captured stream.
+   * @returns {Promise<{stdout: string, stderr: string}>}
+   */
+  static spawnToLogFile(args, { cwd, timeout }, npmCli, logFile, fd) {
+    const command = npmCli !== 'npm' ? process.execPath : 'npm';
+    const fullArgs = npmCli !== 'npm' ? [npmCli, ...args] : args;
+    return new Promise((resolve, reject) => {
+      let timedOut = false;
+      const child = spawn(command, fullArgs, { cwd, stdio: ['ignore', fd, fd] });
+      const timer = timeout
+        ? setTimeout(() => {
+            timedOut = true;
+            child.kill();
+          }, timeout)
+        : null;
+      child.on('error', (err) => {
+        if (timer) clearTimeout(timer);
+        reject(err);
+      });
+      child.on('close', (code, signal) => {
+        if (timer) clearTimeout(timer);
+        if (timedOut) {
+          const err = new Error(`npm run timed out after ${timeout}ms: ${command} ${fullArgs.join(' ')}`);
+          err.killed = true; // mirrors the execFile timeout shape install() checks
+          return reject(err);
+        }
+        if (code !== 0) {
+          const err = new Error(`Command failed: ${command} ${fullArgs.join(' ')}`);
+          err.code = code;
+          err.signal = signal;
+          // The message tail comes from the file, not from a captured stream.
+          err.stderr = this.readOutputTail(logFile);
+          return reject(err);
+        }
+        resolve({ stdout: '', stderr: '' });
+      });
+    });
+  }
+
+  /**
+   * Last `bytes` of a log file as text — the failure-message tail when output
+   * was streamed to disk. Deliberately a local function: DeployJobs (which has
+   * its own tail()) sits ABOVE npm-lifecycle in the call hierarchy (job
+   * runners -> DeployJobs -> DeployManager/GitLifecycle -> this module), so
+   * requiring it here would invert that direction and close a real require
+   * cycle as soon as a runner loads both. Simpler than DeployJobs.tail by
+   * design: no line splitting, no ANSI stripping — this text is only sliced
+   * to 500 chars for a one-line error message, never rendered to a human.
+   * Never throws: a broken log read must not mask the real npm failure.
+   * @returns {string}
+   */
+  static readOutputTail(logPath, bytes = 4096) {
+    let fd;
+    try {
+      const size = fs.statSync(logPath).size;
+      if (size === 0) return '';
+      // Read at most the tail — deploy logs carry real npm output and must
+      // never be slurped whole.
+      const start = Math.max(0, size - bytes);
+      const buffer = Buffer.alloc(size - start);
+      fd = fs.openSync(logPath, 'r');
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+      return buffer.toString('utf8');
+    } catch (_err) {
+      return '';
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch (_err) {
+          // ignore close errors
+        }
+      }
+    }
   }
 
   /**
    * Run `npm install` in the app directory.
+   * @param {string} appPath
+   * @param {{ logFile?: string|null }} [options] job log file; see npmExec
    */
-  static async install(appPath) {
+  static async install(appPath, { logFile } = {}) {
     try {
       // --include=dev: the platform runs under NODE_ENV=production, which makes
       // plain `npm install` omit devDependencies. Build tools (@vue/cli-service,
@@ -209,7 +335,8 @@ class NpmLifecycle {
       await this.npmExec(['install', '--include=dev', '--no-audit', '--no-fund'], {
         cwd: appPath,
         timeout: config.deployment.npmInstallTimeoutMs,
-        maxBuffer: 4 * 1024 * 1024,
+        maxBuffer: 4 * 1024 * 1024, // buffered path only; logFile streams to disk instead
+        logFile,
       });
     } catch (err) {
       if (err.killed || /TIMEDOUT/i.test(err.message || '')) {
@@ -221,8 +348,10 @@ class NpmLifecycle {
 
   /**
    * Run `npm run build` if a build script exists; otherwise no-op.
+   * @param {string} appPath
+   * @param {{ logFile?: string|null }} [options] job log file; see npmExec
    */
-  static async build(appPath) {
+  static async build(appPath, { logFile } = {}) {
     const pkg = this.readPackageJson(appPath);
     if (!pkg.scripts || typeof pkg.scripts.build !== 'string') {
       return;
@@ -231,7 +360,8 @@ class NpmLifecycle {
       await this.npmExec(['run', 'build'], {
         cwd: appPath,
         timeout: config.deployment.npmBuildTimeoutMs,
-        maxBuffer: 4 * 1024 * 1024,
+        maxBuffer: 4 * 1024 * 1024, // buffered path only; logFile streams to disk instead
+        logFile,
       });
     } catch (err) {
       if (err.killed || /TIMEDOUT/i.test(err.message || '')) {
