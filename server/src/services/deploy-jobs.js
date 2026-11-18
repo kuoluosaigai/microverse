@@ -115,7 +115,7 @@ class DeployJobs {
    * @param {{ id: number, name: string }} app app row (name is filename-safe:
    *   ^[A-Za-z0-9_-]{1,64}$ is enforced at creation)
    * @param {'start'|'pull'} kind
-   * @returns {Promise<{ ok: boolean, reason?: 'busy'|'updating', job?: object }>}
+   * @returns {Promise<{ ok: boolean, reason?: 'busy'|'updating'|'gone', job?: object }>}
    */
   static async claim(app, kind) {
     if (this.isUpdateRunning()) {
@@ -154,7 +154,23 @@ class DeployJobs {
       }
     }
     const job = await queries.getDeployJob(app.id);
-    if (job && !created) job.log_path = null;
+    if (!job) {
+      // The app row was CASCADE-deleted between winning the claim and this
+      // read-back. Not 'busy' — nobody is deploying; and never ok:true with a
+      // null job — a truthy-but-empty success TypeErrors the moment a runner
+      // reads job.log_path. The log file already created here would leak too:
+      // pruneLogs(appName) never runs again for a deleted app, so unlink it
+      // (best-effort) before reporting the app as gone.
+      if (created) {
+        try {
+          fs.rmSync(logPath, { force: true });
+        } catch (_err) {
+          // an orphaned log is strictly less bad than failing this path
+        }
+      }
+      return { ok: false, reason: 'gone' };
+    }
+    if (!created) job.log_path = null;
     return { ok: true, job };
   }
 

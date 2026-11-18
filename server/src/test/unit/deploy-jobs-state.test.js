@@ -200,9 +200,19 @@ test('tail strips ANSI escapes and caps lines and bytes', async (t) => {
   // ANSI stripped, visible text kept.
   assert.ok(tail.every((l) => !l.includes(ESI)));
   assert.ok(tail[0].includes('done'));
-  // Byte cap: a whole-file read would start at L0; the 2KB window cannot.
+  // The head is gone — but note `lines: 3` alone cannot prove the read was
+  // bounded: a whole-file slurp followed by slice(-3) returns the same three
+  // lines. The discriminating assertion for "never read the whole file" is
+  // `wide` below.
   assert.ok(Number(/^L(\d+)/.exec(tail[0])[1]) > 300, 'byte window must drop the head: ' + tail[0].slice(0, 8));
   assert.ok(tail[2].startsWith('L399'));
+
+  // TRUE byte-cap discriminator: ask for far more lines than a 2KB window can
+  // hold (~9 lines of ~224B each). A bounded seek-to-end read returns those;
+  // a readFileSync + split + slice(-400) would return all 400.
+  const wide = await DeployJobs.tail(app.id, { lines: 400, maxBytes: 2048 });
+  assert.ok(wide.length >= 3 && wide.length < 15,
+    `2048-byte window must cap the line count well below 400, got ${wide.length}`);
 
   // Default options must also be bounded (<= 200 lines from a 400-line file).
   const def = await DeployJobs.tail(app.id);
@@ -239,6 +249,21 @@ test('claim still succeeds with log_path=null when the log directory cannot be c
   // And the row must not keep a phantom path either — readers stay quiet.
   assert.equal((await queries.getDeployJob(app.id)).log_path, null);
   assert.deepEqual(await DeployJobs.tail(app.id), []);
+});
+
+test('claim returns gone and unlinks its log file when the app row is deleted mid-claim', async (t) => {
+  const app = await AppManager.createApp('jobs-state-gone', 'npm');
+  const { dir } = isolate(t);
+  // Simulate the race: claim wins (real INSERT, file really created), but the
+  // read-back finds no row because the app was CASCADE-deleted in between.
+  mock.method(queries, 'getDeployJob', async () => null);
+
+  const res = await DeployJobs.claim(app, DeployJobs.KINDS.START);
+  // Not a lie ('busy' — nobody holds a deploy), not an empty success
+  // (ok:true would TypeErrors the first reader of job.log_path).
+  assert.deepEqual(res, { ok: false, reason: 'gone' });
+  // The freshly created log has no owner left to prune it: it must be gone.
+  assert.deepEqual(fs.readdirSync(dir), []);
 });
 
 test('a losing claim creates no log file at all', async (t) => {

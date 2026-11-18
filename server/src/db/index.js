@@ -31,8 +31,8 @@ db.run('PRAGMA foreign_keys = ON');
 // app_deploy_job. node-sqlite3 ships an implicit 1000ms busy handler; we raise
 // it explicitly to 5000ms so a claim racing an in-flight write gets a clean
 // changes=0 instead of an SQLITE_BUSY rejection. This is platform-wide: it
-// only turns "fail immediately" into "wait up to 5s, then still fail" — no new
-// failure mode is introduced.
+// relaxes the driver's wait-up-to-1s-then-fail window into
+// wait-up-to-5s-then-still-fail — no new failure mode is introduced.
 db.run('PRAGMA busy_timeout = 5000');
 
 // Promise wrapper for database operations
