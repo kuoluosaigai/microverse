@@ -176,7 +176,7 @@ Expected: FAIL — `Cannot find module '../../services/deploy-jobs'`
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `cd server && node --test src/test/unit/deploy-jobs-state.test.js`
-Expected: PASS（12 tests）
+Expected: PASS（17 tests = Step 0 的 3 条 + Step 1 的 14 条；此处原写 12 是我数漏了 Step 0）
 
 - [ ] **Step 5: owner fencing + busy 等待（Task 1 审查提出的两个缺口）**
   1. `updateDeployJobStep` / `finishDeployJob` 的 `WHERE` 追加 `AND pid = ?`，期望值由 `DeployJobs` 内部用
@@ -235,7 +235,7 @@ test('listNonTerminalDeployJobs returns only running rows and [] when there are 
   —— 注意 pid 在第二个参数的对象**里面**（Task 2 落地后的真实签名），不是第三个位置参数。
   这样 fencing 仍是默认行为，只有"启动收敛"这一个例外用行自带的 pid 自我认证。
 
-- [ ] **Step 4: 跑测试确认通过** — Expected: PASS（4 tests）
+- [ ] **Step 4: 跑测试确认通过** — Expected: PASS（6 tests，与 Step 1 列出的 6 个测试名一致）
 
 - [ ] **Step 5: 提交**
 
