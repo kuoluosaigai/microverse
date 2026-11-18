@@ -203,6 +203,14 @@ class DeployJobs {
   /**
    * Record this process's job outcome and release the lock. Owner-fenced and
    * silent on a vanished row, like advance().
+   *
+   * OWN-PROCESS ONLY: the fence binds this worker's process.pid, so this can
+   * only ever finish a job the calling process itself claimed. Boot-time
+   * convergence over ORPHANED rows (pids of crashed workers) must NOT call
+   * this method — it must go through the query layer with the row's own pid:
+   * queries.finishDeployJob(appId, { status, message, pid: row.pid }).
+   * (advance() carries the same own-pid fence.)
+   *
    * @param {number} appId
    * @param {{ ok: boolean, message?: string|null }} result
    * @returns {Promise<void>}
