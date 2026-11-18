@@ -6,6 +6,7 @@ const ProcessManager = require('./services/process-manager');
 const metricsSampler = require('./services/metrics-sampler');
 const AuthManager = require('./services/auth-manager');
 const ProxyManager = require('./services/proxy-manager');
+const DeployJobs = require('./services/deploy-jobs');
 
 const app = createApp();
 
@@ -40,6 +41,17 @@ const server = app.listen(config.server.port, config.server.host, () => {
 
   dbReady.then(async () => {
     await AuthManager.ensureAdmin();
+    // A worker that died mid-deploy (crash, platform self-reload) leaves its
+    // deploy-job row 'running' forever — converge those orphans to failed.
+    // Its own .catch, and awaited after it: boot must never die on
+    // convergence failure, and a failure here must not skip the proxy
+    // regeneration below. Idempotent, so every cluster worker running this
+    // is safe; live sibling-worker jobs are left alone.
+    await DeployJobs.reconcileOnBoot()
+      .then(({ converged }) => {
+        if (converged > 0) console.log(`✓ Converged ${converged} interrupted deploy job(s)`);
+      })
+      .catch((err) => console.warn(`⚠ deploy job boot convergence failed: ${err.message}`));
     // Sync the reverse-proxy conf with currently-running apps on every boot.
     // Otherwise toggling PROXY_ENABLED (or a platform restart) leaves the conf
     // stale/empty until the next app start/stop — and subdomains fall through to

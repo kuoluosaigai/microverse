@@ -12,6 +12,10 @@ function updateManager() { return require('./update-manager'); }
 // Terminal statuses free the single-flight lock; anything else is in-flight.
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed']);
 
+// Fixed Chinese string — reconcileOnBoot's outcome message, displayed as-is
+// by Task 11's frontend (never translated/reworded at the write side).
+const INTERRUPTED_MESSAGE = '部署被中断（平台重启）';
+
 // CSI escape sequences (colors, cursor moves — everything npm emits):
 // ESC [ <params> <intermediates> <final byte>.
 const ANSI_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
@@ -221,6 +225,55 @@ class DeployJobs {
       message,
       pid: process.pid
     });
+  }
+
+  /**
+   * Boot-time convergence: a worker that died mid-deploy (crash, or the
+   * platform's own `pm2 reload`) leaves its app_deploy_job row 'running'
+   * forever — the ONLY remedy is this pass, run once from server.js after the
+   * DB is ready (boot-only by design: no timer, no periodic sweeper).
+   *
+   * Every row in listNonTerminalDeployJobs() that is NOT live by isLive()'s
+   * reasoning (dead owner pid, or past the stale window) becomes 'failed'
+   * with the fixed interruption message; live rows — another cluster worker's
+   * in-flight deploy — are left exactly alone.
+   *
+   * WHY it must bypass finish(): finish() fences on process.pid (see its
+   * OWN-PROCESS ONLY note), and this runs in a process that by definition is
+   * NOT the owner of an orphaned row — routing through it would silently
+   * change ZERO rows (fence mismatch is designed to be quiet). Each row
+   * self-certifies the terminal write with the pid stored IN the row:
+   * queries.finishDeployJob(appId, { ..., pid: row.pid }). This is the only
+   * exception to the own-pid rule; it weakens nothing, because rows whose
+   * owner is still live are skipped above and never reach the write.
+   *
+   * Idempotent: converged rows turn terminal, so a later boot (every cluster
+   * worker runs this) lists and changes nothing.
+   *
+   * @param {{ now?: number, isPidAlive?: (pid: number) => boolean }} [options]
+   *   test seams only — production takes the defaults (Date.now and the class
+   *   pid probe).
+   * @returns {Promise<{ converged: number }>} rows actually terminated
+   */
+  static async reconcileOnBoot({ now = Date.now(), isPidAlive } = {}) {
+    // isLive() consults `this.isPidAlive`; when a probe is injected, hand it
+    // a `this` that only provides the injected one — reusing the full
+    // status/started_at/staleness reasoning instead of re-deriving it.
+    const liveOwner = typeof isPidAlive === 'function' ? { isPidAlive } : this;
+    const rows = await queries.listNonTerminalDeployJobs();
+    let converged = 0;
+    for (const row of rows) {
+      if (this.isLive.call(liveOwner, row, now)) continue;
+      const result = await queries.finishDeployJob(row.app_id, {
+        status: 'failed',
+        message: INTERRUPTED_MESSAGE,
+        pid: row.pid
+      });
+      // Count only rows we really flipped: one lost to a mid-loop app delete
+      // or a fresh claim is not a convergence.
+      if (result && result.changes > 0) converged += 1;
+    }
+    return { converged };
   }
 
   /**
