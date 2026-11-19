@@ -702,6 +702,12 @@ git commit -m "feat(git): run manual pull as a deploy job"
 - Consumes: `UpdateManager.isUpdateRunning()`（已存在，`update-manager.js:333`）、Task 2 `DeployJobs.activeJob`
 - Produces: preflight 拒绝消息 `有应用正在部署（<app> · <step>），请等待完成`；claim 拒绝（`reason:'updating'`）
 
+- [ ] **Step 0: 先收拢 claim 失败的映射（Task 9 审查的发现）**
+  `gone→404 / updating→409 / busy→busyMessage(+行消失兜底404)` 这段映射，
+  现在已经**逐字重复了两遍**（`routes/apps.js` 的 start 与 `routes/git.js` 的 pull，只差动词），
+  而本任务会让自更新成为第三处。**先抽成 `sendClaimFailure(res, claim, app, action)`**（放 `routes/deploy-conflict.js`，
+  它已经是 409 映射的家），再让三处共用。不抽就是三处会各自漂移的文案与状态码。
+
 - [ ] **Step 1: 写失败测试**
 
 ```js
@@ -742,6 +748,11 @@ git commit -m "feat(update): refuse updates while an app deploy is in flight"
 - Produces: i18n key `appCard.deploy.<step>`、`appCard.deployFailed`、`appCard.deployLog`、`appCard.deployBusy`、`messages.deployStarted`
 
 - [ ] **Step 1: 实现 api 层** —— `startApp`/`pullAppGit` 不再 `timeout: 0`（202 秒回），新增 `getDeployStatus(id)`。
+
+**先修一个真 bug（Task 9 审查发现，别按实现者的描述去修）**：`GitModal.jsx` 并没有"读旧的 200 响应体" ——
+它**完全丢弃响应体**（`await pullAppGit(appId)` 后直接成功 toast + `load()`），
+所以 pull 变异步后的实际症状是：**刚拿到 202 就弹"拉取成功"，并展示尚未更新的 git 摘要**。
+修法：pull 之后改为"进入任务态并轮询 `app.deploy` / `app.git.last_status`"，收敛后再报成功/失败。
 
 - [ ] **Step 2: 实现 AppRow** —— `deploy.live` 时状态列显示 `● 部署中 · <step 文案>`，其它写入口 `disabled`（不隐藏，保持列宽稳定，规格决策 6 的草图）；`!live && deploy.status==='failed'` 时行内显示 `✖ message` + 一个"日志"入口。`Dashboard.handleStart` 改成 `await startApp(id)` 后立即 `loadApps(true)`，`startingId` 的清除改由服务端 `deploy.live` 决定（刷新页面也回得来）。
 
