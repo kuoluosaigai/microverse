@@ -70,8 +70,10 @@ class DeployManager {
    * @param {{ onStep?: ((step: string) => void) | null, logFile?: string | null }} [options]
    *   onStep — optional synchronous progress listener called with plain
    *   step-name strings at the boundaries the [deploy-perf] laps below
-   *   measure, in the fixed order validate -> git -> install -> build ->
-   *   launch -> proxy (only steps that actually run are reported). logFile —
+   *   measure, in real execution order git -> validate -> install -> build
+   *   -> launch -> proxy, each reported immediately BEFORE the work it names
+   *   and only when that work actually runs (gated install/build and a
+   *   skipped proxy regenerate report nothing). logFile —
    *   the deploy job's transcript path, forwarded to NpmLifecycle.ensureBuilt
    *   so background npm install/build output lands on disk. Both default to
    *   null; calling deployApp(appId) with no options behaves exactly as
@@ -108,14 +110,6 @@ class DeployManager {
     if (app.status === 'running') {
       throw new Error('App is already running');
     }
-
-    // The deploy work starts here. 'validate' is reported BEFORE the git
-    // block (which physically runs first) because the fixed step order —
-    // validate -> git -> install -> build -> launch -> proxy — is the
-    // contract DeployJobs.STEPS and the job UI are built on, and reporting
-    // it at validateAppDeployment itself would put 'git' ahead of 'validate'
-    // for every git-bound app. The actual validation follows the git work.
-    report('validate');
 
     // The DB claim is the cross-worker single-flight guard for everything that
     // touches the app directory (git → install/build → launch). It is held until
@@ -154,7 +148,11 @@ class DeployManager {
     }
 
     try {
-      // Validate app can be deployed
+      // Validate app can be deployed. Reported immediately before the
+      // validation runs — the same "before the work" rule as every step here,
+      // so a slow/hung disk check is visible as the current step even after
+      // the git block above has completed.
+      report('validate');
       const validation = await AppManager.validateAppDeployment(appId);
       perf.lap('validate(files on disk)');
       if (!validation.valid) {
@@ -212,9 +210,20 @@ class DeployManager {
       perf.lap('db status=running');
 
       // Best-effort: refresh the edge-proxy routes so this app's subdomain is
-      // reachable. Never let a proxy problem block the deploy.
-      report('proxy');
-      try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+      // reachable. Never let a proxy problem block the deploy. The proxy step
+      // is reported only when it actually does work: with PROXY_ENABLED off,
+      // regenerate() short-circuits to { skipped: true } in 0ms, and a badge
+      // for nothing is the same lie Ruling 1 bans for gated npm steps. A
+      // THROWING regenerate is not a skip — the step started, so it still
+      // counts as reported. (The skip is only known from the return value,
+      // so unlike the other steps this one is reported just after the call;
+      // a slow live reload shows the previous step until it finishes.)
+      let proxySkipped = false;
+      try {
+        const result = await ProxyManager.regenerate();
+        proxySkipped = Boolean(result && result.skipped);
+      } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
+      if (!proxySkipped) report('proxy');
       perf.lap('proxy regenerate');
     } catch (err) {
       perfLine(app.name, 'deployApp FAILED after', perf.total(), err.message);

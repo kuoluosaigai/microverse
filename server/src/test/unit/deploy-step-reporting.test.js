@@ -32,11 +32,13 @@ async function makeApp(name, deployType) {
 }
 
 // PM2 reports nothing running (reconcile keeps the DB truth), lifecycle
-// launches and the edge-proxy reload are stubbed.
+// launches and the edge-proxy reload are stubbed. The regenerate stub returns
+// a NON-skipped success (the enabled-proxy shape), so the proxy step counts as
+// real work and IS reported; the skipped path is pinned separately below.
 function mockStartEnvironment() {
   mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
   mock.method(ProcessManager, 'startProcess', async () => ({ success: true }));
-  mock.method(ProxyManager, 'regenerate', async () => ({ ok: true, skipped: true }));
+  mock.method(ProxyManager, 'regenerate', async () => ({ ok: true }));
 }
 
 // Stubbed install/build bodies, but the REAL fingerprint gating in
@@ -78,19 +80,76 @@ test('deployApp reports git/install/build for a git-bound npm app', async () => 
   const steps = [];
   try {
     await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
-    // Fixed order, every step present (first deploy: gates are fresh, so
-    // install and build actually run and therefore get reported).
-    assert.deepEqual(steps, ['validate', 'git', 'install', 'build', 'launch', 'proxy']);
-    assert.equal(steps[0], 'validate');
-    // Reported names must be members of DeployJobs.STEPS and arrive in
-    // non-decreasing STEPS order — the runner writes them through advance().
-    const idx = steps.map((s) => DeployJobs.STEPS.indexOf(s));
-    assert.ok(idx.every((i) => i >= 0), `unknown step names reported: ${steps}`);
-    for (let i = 1; i < idx.length; i++) {
-      assert.ok(idx[i] >= idx[i - 1], `steps not monotonic under STEPS: ${steps}`);
-    }
+    // Real execution order (plan revision): the git block physically runs
+    // BEFORE validation, so every step is reported immediately before its
+    // work and 'git' is the FIRST report for a git-bound app. First deploy:
+    // gates are fresh, so install/build really run and are reported.
+    assert.deepEqual(steps, ['git', 'validate', 'install', 'build', 'launch', 'proxy']);
+    assert.equal(steps[0], 'git');
+    // Names stay members of the shared step list (DeployJobs.STEPS is the
+    // re-exported DEPLOY_STEPS from utils/deploy-steps).
+    assert.ok(steps.every((s) => DeployJobs.STEPS.includes(s)), `unknown step names reported: ${steps}`);
   } finally {
     await queries.deleteAppGitSource(app.id);
+    await queries.deleteApp(app.id);
+  }
+});
+
+test('a git-prepare failure leaves git as the last reported step', async () => {
+  // The observability point of reporting 'git' BEFORE prepareForStart: while
+  // a clone/fetch hangs or dies, the job's current step is 'git' — it no
+  // longer masquerades as validation. A rejection mid-prepare is the test
+  // stand-in for a hang: the callback stream simply stops at 'git'.
+  const app = await makeApp('steps-git-hang', 'npm');
+  await queries.upsertAppGitSource({
+    appId: app.id,
+    url: 'https://example.com/repo.git',
+    branch: 'main',
+    autoUpdate: true,
+    webhookSecret: 'test-secret'
+  });
+  mockStartEnvironment();
+  mock.method(GitLifecycle, 'prepareForStart', async () => {
+    throw new Error('git fetch hung');
+  });
+  const steps = [];
+  try {
+    await assert.rejects(
+      () => DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) }),
+      /git fetch hung/
+    );
+    assert.deepEqual(steps, ['git'], 'validate must NOT have been reported while git was current');
+  } finally {
+    await queries.deleteAppGitSource(app.id);
+    await queries.deleteApp(app.id);
+  }
+});
+
+test('a skipped proxy regenerate reports no proxy step', async () => {
+  // Ruling 1 applied to proxy: with PROXY_ENABLED=false (the test-env
+  // default) the REAL regenerate short-circuits to { skipped: true } in 0ms —
+  // nothing ran, so nothing is reported. A THROWING regenerate is not a
+  // skip: the step was started, so it still counts as reported.
+  const app = await makeApp('steps-proxy-skip', 'http-server');
+  mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
+  mock.method(ProcessManager, 'startProcess', async () => ({ success: true }));
+  const steps = [];
+  try {
+    await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
+    assert.deepEqual(steps, ['validate', 'launch'],
+      'the disabled-proxy skip must report no proxy step');
+
+    // Throw path: best-effort regenerate fails, deploy still succeeds, and
+    // the step that began is visible.
+    await queries.updateAppStatus('stopped', app.id);
+    mock.method(ProxyManager, 'regenerate', async () => { throw new Error('nginx reload failed'); });
+    mock.method(console, 'warn', () => {});
+    const steps2 = [];
+    const started = await DeployManager.deployApp(app.id, { onStep: (s) => steps2.push(s) });
+    assert.equal(started.status, 'running');
+    assert.deepEqual(steps2, ['validate', 'launch', 'proxy'],
+      'a throwing regenerate was started, so it counts as reported');
+  } finally {
     await queries.deleteApp(app.id);
   }
 });
