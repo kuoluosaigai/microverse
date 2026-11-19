@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS app_deploy_job (
   app_id      INTEGER PRIMARY KEY,   -- an app has at most one job: current or most recent
   kind        TEXT NOT NULL,         -- 'start' | 'pull'
   status      TEXT NOT NULL,         -- 'running' | 'succeeded' | 'failed' (terminal values free the lock)
-  step        TEXT,                  -- 'queued' | validate | git | install | build | launch | proxy | done
+  step        TEXT,                  -- 'queued' | git | validate | install | build | nginx | launch | proxy | done (utils/deploy-steps.js; array order IS execution order; gated steps only when that work runs)
   message     TEXT,                  -- failure summary for inline UI display at terminal status
   log_path    TEXT,                  -- data/deploy-logs/<app>-<epoch>.log
   pid         INTEGER,               -- process that owns the job; used for liveness checks

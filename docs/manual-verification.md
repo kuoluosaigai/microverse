@@ -84,3 +84,23 @@
       静默刷新），没有每行 2s 的请求风暴；只有打开着的日志抽屉有 2s 轮询。
 - [ ] **非部署路径回归**：静态(http-server)应用启动、停止、重启、上传、备份、恢复、默认域名切换等
       一切与改动前行为一致（deploy 摘要为 null 时行渲染不变）。
+
+## 异步部署任务 — 服务端契约冒烟（Task 12，验收清单逐条）
+
+> 同样全部 `[ ]` UNVERIFIED（curl / 真机级别，不依赖浏览器）。后端冒烟一次已在临时环境验证过
+> 202/`{job,logTail}` 形状与部署中 409（2026-11-20）；以下要求在**真实开发机/测试服务器**复跑。
+
+- [ ] **真实 npm 应用首次部署全程可见进度**：全新 npm 应用（有依赖）点 Start → 立即 202 →
+      `GET /api/apps/<id>/deploy` 轮询里 step 依次出现 `queued → validate → install → build → launch → done`，
+      `logTail` 里能看到 npm 真实输出（ANSI 已剥）；`data/deploy-logs/<app>-<epoch>.log` 落盘且每应用最多保留 5 份。
+- [ ] **部署中删除被拒**：install 期间 `DELETE /api/apps/<id>` → **409**（消息含 kind · step），
+      app 行与 job 行都还在，任务照常收敛；再删成功。（同窗口对 stop/上传/PUT env/Git 绑定各点一次都应 409。）
+- [ ] **worker 被杀 → 重启平台显示"被中断"且可立即重部署**：部署中途 `pm2 delete/reload` 平台（或 kill worker）
+      → 重启平台后该 job 行变 `failed` + `部署被中断（平台重启）`，保留死在它上面的 step；
+      此时再点 Start **不应**等 40 分钟陈旧阈值，应直接 202（`reconcileOnBoot` 的活性判定）。
+- [ ] **pull 失败日志抽屉里有 npm 原文**：绑 Git 的 npm 应用把远端分支改成 build 必挂的提交 → Pull →
+      任务 `failed`，开日志抽屉轮询 `GET /deploy` → `logTail` 显示 `npm run build` 的真实输出，
+      且 worktree 已回滚到上一 commit（`app.git.deployed_commit` 不变，`last_status=failed`）。
+- [ ] **自更新互斥**：任一应用部署进行中 `POST /api/system/update` → 409
+      `有应用正在部署（<app> · <step>），请等待完成`；反向（持活 update.lock 时点 Start）→ 409
+      `平台正在自更新，请稍后再试`。

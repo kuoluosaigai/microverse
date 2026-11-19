@@ -315,7 +315,6 @@
   "messages": {
     "appCreated": "应用创建成功",
     "appDeleted": "应用删除成功",
-    "appStarted": "应用启动成功",
     "deployStarted": "部署任务已开始，进度显示在应用行",
     "appStopped": "应用停止成功",
     "filesUploaded": "文件上传成功",

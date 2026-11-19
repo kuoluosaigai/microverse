@@ -12,6 +12,8 @@ info:
     All `/apps` endpoints require an authenticated admin session (`POST /api/auth/login`); missing/invalid session → HTTP 401.
 
     Platform self-update operations under `/system` (`/system/version`, `/system/update`, `/system/update/status`) are also authenticated admin-only endpoints.
+
+    **Async deploy jobs**: `POST /apps/{id}/start` and `POST /apps/{id}/git/pull` answer `202` as soon as the request can decide WITHOUT doing the work, then run detached as deploy jobs (`DeployRunner` → `DeployManager.deployApp` / `GitLifecycle.pull`). Progress and outcome are read from the `deploy` summary on app objects or from `GET /apps/{id}/deploy`. While an app's job is live, every mutating request to that app answers `409` (message `部署进行中（<kind> · <step>），请等待完成后再<action>`) — reads stay allowed. Job state lives in the shared SQLite `app_deploy_job` table (one row per app), so claims, steps, and the boot-time interruption sweep work across cluster workers.
   license:
     name: MIT
 servers:
@@ -25,7 +27,7 @@ tags:
   - name: Applications
     description: Application CRUD
   - name: Lifecycle
-    description: Start / stop / restart / sync
+    description: Start / stop / restart / sync / deploy-job status
   - name: Files & Env
     description: File listing, upload, and environment variables
   - name: Logs
@@ -84,7 +86,13 @@ paths:
         '202': { description: Update started }
         '400': { description: Update unavailable or preflight failed }
         '401': { description: Not authenticated }
-        '409': { description: Update already running }
+        '409':
+          description: |
+            Refused (two distinct causes share this code):
+            * an update is already running — `已有更新正在进行`;
+            * an app deploy job is live on ANY app — a self-update ends in `pm2 reload`,
+              which would kill it. Checked in preflight and re-checked after the update-lock
+              claim (race-free). Message names the blocker: `有应用正在部署（<app> · <step>），请等待完成`.
         '500': { description: Failed to spawn the detached update helper }
   /system/update/status:
     get:
@@ -260,34 +268,91 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: |
+            A deploy job is live for this app (`...请等待完成后再删除` — the row cascades with
+            the app, so refusing before the delete is what keeps the running job's `pm2 start`
+            from resurrecting an untracked process), or a git sync holds the working-tree claim
+            (`Update in progress`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /apps/{id}/start:
     post:
       tags: [Lifecycle]
-      summary: Start an application (npm apps install/build only when package.json/lockfile or the app tree changed)
+      summary: Start an application — 202 accepted, runs as an async deploy job
+      description: |
+        Returns `202` once the deploy job is atomically claimed (`DeployJobs.claim`), NOT once the
+        app is up. The request answers synchronously only what it can decide WITHOUT doing the work:
+        app lookup, live-job gate, PM2 reconcile (already-running check), on-disk validation for
+        NON-git apps (a git-bound app's directory is legitimately empty until the clone runs — its
+        validation moves into the job), and the git-claim / self-update-lock checks. Everything else
+        — git clone/fetch, `npm install`/`npm run build` (fingerprint-gated), nginx preflight,
+        `pm2 start`, proxy regenerate — runs detached and is reported through the job row: watch
+        `GET /apps/{id}/deploy` or the `deploy` summary on app objects. Install/build failures,
+        clone failures and timeouts are therefore NO LONGER responses of this endpoint; they land
+        as the job's terminal `failed` status with the message in `deploy.message`.
       operationId: startApp
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
-        '200':
-          description: Started (running)
+        '202':
+          description: Accepted — job claimed and running detached (outcome via the job row)
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  data: { $ref: '#/components/schemas/App' }
+                  data: { $ref: '#/components/schemas/DeployAccepted' }
         '400':
-          description: Already running, missing start script, npm install/build failure/timeout, invalid package.json
+          description: App is already running (synchronous PM2 reconcile), or a non-git app fails on-disk validation (empty/missing directory, missing `index.html`, missing start script, invalid package.json)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
-          description: App not found
+          description: App not found (also covers the app vanishing between lookup and claim — explicitly NOT a 202 then)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: |
+            Refused (three distinct causes): a deploy job is already live for this app
+            (`部署进行中（<kind> · <step>），请等待完成后再启动`); a webhook sync owns the
+            working-tree claim (`Update in progress`); the platform self-update lock is held
+            (`平台正在自更新，请稍后再试`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '500':
           description: Server error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /apps/{id}/deploy:
+    get:
+      tags: [Lifecycle]
+      summary: Current deploy-job state plus a bounded tail of the job log
+      description: |
+        The endpoint that turns a 202 into visible progress (the dashboard's silent refresh and the
+        log drawer poll it; there is deliberately no SSE for job logs). `job` is EXACTLY the `deploy`
+        summary attached to app objects (one producer, AppManager's `toDeploySummary`; null when the
+        app has never deployed). `logTail` is server-side bounded — newest 200 non-empty lines within
+        the last 64KB, ANSI-stripped — and takes NO client parameter to enlarge it; it is `[]` when
+        the job row, its `log_path`, or the file is missing (reading a log must never fail the request).
+      operationId: getAppDeploy
+      parameters: [{ $ref: '#/components/parameters/AppId' }]
+      responses:
+        '200':
+          description: Job summary + bounded log tail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/DeployStatusData' }
+        '404':
+          description: App not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -309,6 +374,11 @@ paths:
                   data: { $ref: '#/components/schemas/App' }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再停止`) — the app is not running yet, so a no-op stop followed by the job's own launch would mean the operator's button did the opposite of what was pressed
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -335,6 +405,11 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再重启`), or a git sync owns the working tree (`Update in progress`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -428,7 +503,7 @@ paths:
           schema: { type: integer }
       responses:
         '200':
-          description: Updated app
+          description: The updated raw `apps` row — deliberately NOT the enriched App shape (no `git`, `deploy` or `metrics` keys in this response)
           content:
             application/json:
               schema:
@@ -438,6 +513,11 @@ paths:
                   data: { $ref: '#/components/schemas/App' }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再设为默认`) — the job's proxy step would regenerate the edge from a routing table that no longer matches the operator's newest choice
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -465,6 +545,11 @@ paths:
                       message: { type: string, example: "Default cleared" }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再取消默认`) — the job's proxy step could re-add the root route this call is removing
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -522,7 +607,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
-          description: Update in progress
+          description: A git sync owns the working tree (`Update in progress`), or a deploy job is live for this app (`...请等待完成后再修改 Git 源`) — rebinding mid-job would make the running job deploy a source the operator has already replaced
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -546,7 +631,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
-          description: Update in progress
+          description: A git sync owns the working tree (`Update in progress`), or a deploy job is live for this app (`...请等待完成后再解绑 Git 源`) — the running job still reads this binding (clone/build)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -569,6 +654,11 @@ paths:
                   data: { $ref: '#/components/schemas/AppGitSource' }
         '404':
           description: App not found or no Git source bound
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再轮换密钥`) — a webhook delivery racing the job could authenticate against a secret mid-rotation
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -602,32 +692,42 @@ paths:
   /apps/{id}/git/pull:
     post:
       tags: [Git]
-      summary: Pull the branch, rebuild npm apps, and restart a running app
-      description: Synchronous — the DB claim is the single-flight guard, so a concurrent pull returns 409 rather than racing the working tree. A fetch/build/restart failure returns 400 with the worktree rolled back to the previous commit (a restart-only failure keeps the new commit).
+      summary: Pull the branch, rebuild npm apps, and restart a running app — 202 accepted, runs as an async deploy job (kind `pull`)
+      description: |
+        Same async contract as `POST /apps/{id}/start` (spec decision 7): the minutes-long
+        fetch / reset / npm install / npm run build / restart chain runs detached; the 202 only
+        says the deploy job was claimed. The outcome is read afterwards from the app object's
+        `git` summary (`last_status` `updating` → `success`/`failed`, `deployed_commit`) and the
+        `deploy` job summary — NOT from this response. Rollback semantics are unchanged and live
+        inside the job: a fetch or build failure rolls the worktree back to the previous HEAD (a
+        restart-only failure keeps the new commit); if a webhook sync won the working-tree claim
+        after this job claimed its own, the job converges to `failed` — the 202 cannot be revoked.
+        The old synchronous `200 + {deployedCommit,status}` and the pull-failure `400` are gone:
+        `git.js` still maps client git errors to 400 defensively, but every failure of the pull
+        itself now surfaces through the job row.
       operationId: pullAppGitSource
       parameters: [{ $ref: '#/components/parameters/AppId' }]
       responses:
-        '200':
-          description: Pull completed
+        '202':
+          description: Accepted — pull job claimed and running detached
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  data: { $ref: '#/components/schemas/GitPullResult' }
-        '400':
-          description: Pull failed (fetch/build/restart); see error.message
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+                  data: { $ref: '#/components/schemas/DeployAccepted' }
         '404':
-          description: App not found or no Git source bound
+          description: App not found or no Git source bound (also the app vanishing mid-claim)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
-          description: Update already in progress
+          description: |
+            Refused (three distinct causes): a deploy job is already live for this app
+            (`部署进行中（<kind> · <step>），请等待完成后再拉取更新`); a webhook sync owns the
+            working-tree claim (`Update in progress`); the platform self-update lock is held
+            (`平台正在自更新，请稍后再试`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -664,7 +764,7 @@ paths:
                 file: { type: string, format: binary }
       responses:
         '201':
-          description: App restored (status stopped)
+          description: App restored (status stopped) — returns the raw `apps` row, NOT the enriched App shape (no `git`/`deploy`/`metrics` keys; a restored app is unbound anyway)
           content:
             application/json:
               schema:
@@ -702,12 +802,17 @@ paths:
                   success: { type: boolean, example: true }
                   data: { $ref: '#/components/schemas/UploadResponse' }
         '400':
-          description: No files / file too large / ZIP extraction failed
+          description: No files / file too large / ZIP extraction failed / Git-source app (repo content owns the directory)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再上传文件`) — install/build are reading exactly this directory. Accepted v1 residual — the request body is already streaming when the 409 is answered, so browsers surface it as an upload failure.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -763,6 +868,11 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: App not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: A deploy job is live for this app (`...请等待完成后再修改环境变量`) — env is baked at launch, so mid-job writes could ship a half-new set
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -902,8 +1012,16 @@ components:
             uptimeMs: { type: integer, description: "uptime in ms" }
         git:
           $ref: '#/components/schemas/GitSummary'
+        deploy:
+          $ref: '#/components/schemas/DeploySummary'
         created_at: { type: string, example: "2026-07-12 03:25:59" }
         updated_at: { type: string, example: "2026-07-12 03:26:23" }
+      description: |
+        Enriched app shape. Both summary objects (`git`, `deploy`) are attached by
+        AppManager.getAllApps/getAppById — present in `GET /apps`, `GET /apps/{id}`,
+        `POST /apps` (create returns the enriched row too: `deploy: null` before the first
+        deploy), and the stop/restart/sync responses. Raw-row responses have NEITHER key:
+        `PUT /apps/{id}/default` and `POST /apps/restore` return the bare `apps` row.
     AppCreateInput:
       type: object
       required: [name, deploy_type]
@@ -928,7 +1046,7 @@ components:
     GitSummary:
       type: object
       nullable: true
-      description: Secret-free Git binding attached to app responses (null when the app is not Git-sourced).
+      description: Secret-free Git binding attached to enriched app responses (null when the app is not Git-sourced); same attach scope as `DeploySummary`.
       properties:
         url: { type: string, example: "https://github.com/owner/repo" }
         branch: { type: string, example: "main" }
@@ -971,14 +1089,62 @@ components:
         remoteCommit: { type: string, nullable: true, description: null when the branch does not exist on the remote }
         deployedCommit: { type: string, nullable: true }
         upToDate: { type: boolean, example: false }
-    GitPullResult:
+    DeployAccepted:
       type: object
+      description: The only body a 202 deploy acceptance returns — an acknowledgement, never app state.
       properties:
+        app_id: { type: integer, example: 7 }
+        kind:
+          type: string
+          enum: [start, pull]
+          example: "start"
         status:
           type: string
-          enum: [success, up-to-date]
-          example: "success"
-        deployedCommit: { type: string, nullable: true }
+          enum: [running]
+          description: Row status right after the claim — there is NO 'queued' status (queue-wait is expressed by step='queued')
+          example: "running"
+    DeploySummary:
+      type: object
+      nullable: true
+      description: |
+        Current-or-most-recent deploy job for the app (null when the app has never deployed).
+        camelCase by contract — no snake_case column and no pid/log_path leaks to the client
+        (AppManager's `toDeploySummary` is the single producer). `live` is DeployJobs.isLive's
+        verdict (non-terminal status + owner pid alive + started_at within DEPLOY_JOB_STALE_MS),
+        never a bare status check — a dead-owner row must not hold the UI in a fake deploying state.
+        An interrupted job (platform restart / killed worker) converges at boot to
+        status='failed' with message='部署被中断（平台重启）' and keeps the step it died on.
+      properties:
+        kind:
+          type: string
+          enum: [start, pull]
+          example: "start"
+        status:
+          type: string
+          enum: [running, succeeded, failed]
+          example: "running"
+        step:
+          type: string
+          nullable: true
+          enum: [queued, git, validate, install, build, nginx, launch, proxy, done]
+          description: Progress ladder (utils/deploy-steps.js) — array order IS execution order; gated steps (git/install/build/nginx/proxy) are reported only when that work actually runs.
+          example: "install"
+        message:
+          type: string
+          nullable: true
+          description: Failure summary for inline UI display at terminal status (null on success)
+        startedAt: { type: string, nullable: true, example: "2026-11-18 03:25:59" }
+        finishedAt: { type: string, nullable: true, example: "2026-11-18 03:26:23" }
+        live: { type: boolean, example: true }
+    DeployStatusData:
+      type: object
+      description: GET /apps/{id}/deploy payload — the job summary plus a server-bounded tail of the job log.
+      properties:
+        job: { $ref: '#/components/schemas/DeploySummary' }
+        logTail:
+          type: array
+          items: { type: string }
+          description: Newest ≤200 non-empty lines from within the last 64KB of the job's log file (data/deploy-logs/<app>-<epoch>.log), ANSI-stripped; [] when the row, path or file is missing. No client parameter enlarges this.
     EnvEntry:
       type: object
       required: [key]

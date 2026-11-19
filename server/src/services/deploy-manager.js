@@ -135,9 +135,13 @@ class DeployManager {
         perf.lap('git-prepare(clone/fetch/reset/clean)', 'FAILED');
         // Clone (or checkout inspection) failed — nothing safe to launch and
         // the cause is client-facing (bad URL/branch, unreachable repo), not a
-        // server fault. Mark it so the start route maps it to 400 without
-        // string-matching git stderr. Do NOT release inside the try below:
-        // releasing here is the only exit path.
+        // server fault. The 400 mark is a synchronous-era leftover: since
+        // start answers 202, deployApp only ever runs inside DeployRunner, so
+        // a clone failure can no longer reach the route's error mapping — it
+        // surfaces as the job's `failed` message instead. The mark is kept so
+        // the route's defensive `error.status === 400` branch keeps identical
+        // meaning should deployApp ever be awaited in-request again. Do NOT
+        // release inside the try below: releasing here is the only exit path.
         if (err && typeof err === 'object') err.status = 400;
         await queries.finishGitSync(appId, {
           status: 'failed',

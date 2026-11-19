@@ -315,7 +315,6 @@
   "messages": {
     "appCreated": "Application created successfully",
     "appDeleted": "Application deleted successfully",
-    "appStarted": "Application started successfully",
     "deployStarted": "Deploy job started — watch progress in the app row",
     "appStopped": "Application stopped successfully",
     "filesUploaded": "Files uploaded successfully",

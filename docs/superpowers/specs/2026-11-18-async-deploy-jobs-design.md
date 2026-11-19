@@ -295,3 +295,17 @@ git prepare **之后**才跑（`deploy-manager.js:119`）—— 这个顺序是�
 7. 新增：有活跃任务时 `POST /api/system/update` 被拒；持活 `update.lock` 时 start 被拒（决策 9 双向）。
 8. 手动冒烟（Windows 开发机 + 测试服务器各一次）：真实 npm 应用首次部署全程可见进度，
    关页面再开仍显示"部署中"，终态后应用可访问；中途手动 `pm2 reload` 平台后任务变 failed 且再点一次能成功。
+
+---
+
+## 实现勘误（Task 12 契约核对，2026-11-20 追加；本文件是当时的批准稿，正文不回改）
+
+以 `server/src/utils/deploy-steps.js` 为唯一权威，实现落地后与本文件有两处出入：
+
+- **step 词表**（决策 4 的 SQL 注释与"还剩给 builder 的判断"第 2 条）：实际是 **9 个值**，执行序为
+  `queued, git, validate, install, build, nginx, launch, proxy, done`。
+  与规格草案的差异：(a) `git` 在 `validate` **之前**（git-prepare 物理先于文件校验运行）；
+  (b) `nginx` 是 Task 5 审查后**新增**的——不在本规格内：nginx 类应用的 `nginx -t` 预检原本没有自己的槽位，
+  挂住时 UI 会显示"校验文件中"，与刚修掉的 git 冒名同属一类故障。见计划 Task 5b 的说明。
+- **status 取值**（决策 4 的 SQL 注释写了 `queued|running|succeeded|failed`）：实现中**没有 `queued` 状态**——
+  抢到 claim 即 `running`，排队等待由 `step='queued'` 表达（`schema.sql` 注释与 `claimDeployJob` 为准）。
