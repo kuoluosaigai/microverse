@@ -1,5 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+// setup points DB_PATH/APPS_DIR at a temp dir BEFORE proxy-manager's require
+// chain (-> ../db) opens the database — never touch the real dev DB in tests.
+require('../helpers/setup');
 const { renderProxyConfig, validateBaseDomain, resolveBaseDomain, validateProxyRoute, validateProxyDomain } = require('../../services/proxy-manager');
 
 const app = (over) => ({ name: 'sticky', port: 3001, status: 'running', is_default: 0, ...over });
