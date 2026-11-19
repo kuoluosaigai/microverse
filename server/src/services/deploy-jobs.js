@@ -3,7 +3,7 @@ const path = require('path');
 const { queries } = require('../db');
 const config = require('../config');
 const pathHelper = require('../utils/path-helper');
-const { DEPLOY_STEPS, DEPLOY_KINDS } = require('../utils/deploy-steps');
+const { DEPLOY_STEPS, DEPLOY_STEP, DEPLOY_KINDS } = require('../utils/deploy-steps');
 
 // Lazy require (git-lifecycle.js pattern): update-manager.js will require THIS
 // module once the self-update flow moves onto deploy jobs (Task 10). A
@@ -200,14 +200,16 @@ class DeployJobs {
   }
 
   /**
-   * Persist progress of the job this process owns. Silent no-op when the row
-   * is gone (app deleted mid-job) or was stolen (fence mismatch).
+   * Persist progress of the job this process owns. Silent no-op (changes=0)
+   * when the row is gone (app deleted mid-job), was stolen (pid fence
+   * mismatch) or already TERMINAL (status fence — a late fire-and-forget
+   * report must never rewrite a finished job's step).
    * @param {number} appId
    * @param {string} step one of DeployJobs.STEPS
-   * @returns {Promise<void>}
+   * @returns {Promise<object>} the dbRun result; callers may observe changes
    */
   static async advance(appId, step) {
-    await queries.updateDeployJobStep(appId, step, process.pid);
+    return queries.updateDeployJobStep(appId, step, process.pid);
   }
 
   /**
@@ -221,6 +223,14 @@ class DeployJobs {
    * queries.finishDeployJob(appId, { status, message, pid: row.pid }).
    * (advance() carries the same own-pid fence.)
    *
+   * SUCCESS LANDS THE TERMINAL STEP: ok:true writes step='done' in the SAME
+   * UPDATE as status/finished_at, so there is no finish-then-advance window a
+   * late fire-and-forget report could overwrite. This is deliberate (Task 8
+   * review ruling): start and pull share this single success path (no second
+   * writer can forget 'done'), and reconcileOnBoot goes through the query
+   * layer WITHOUT step on purpose — an interrupted job keeps the step it died
+   * on and never claims done. ok:false never touches step.
+   *
    * @param {number} appId
    * @param {{ ok: boolean, message?: string|null }} result
    * @returns {Promise<void>}
@@ -229,6 +239,7 @@ class DeployJobs {
     await queries.finishDeployJob(appId, {
       status: ok ? 'succeeded' : 'failed',
       message,
+      step: ok ? DEPLOY_STEP.DONE : undefined,
       pid: process.pid
     });
   }
@@ -294,9 +305,24 @@ class DeployJobs {
   }
 
   /**
-   * Reject mutating an app whose deploy job is live.
-   * Message format is fixed (Task 11 i18n keys off it):
+   * THE single producer of the busy-409 wording (Task 6 review: the start
+   * route hand-copied this message and dropped the `· <step>` part — two
+   * producers, two wordings, guaranteed drift once Task 11 keys i18n off
+   * them). assertIdle and the route's losing-claim branch both render here.
+   * Format is fixed (Task 11 i18n keys off it):
    *   部署进行中（<kind> · <step>），请等待完成后再<action>
+   * @param {{kind?: string, step?: string}|null} job the live (or just-lost-
+   *   the-race-to) job row; missing parts degrade to whatever the row has
+   * @param {string} action verb appended to the message, e.g. '删除'
+   * @returns {string}
+   */
+  static busyMessage(job, action) {
+    const detail = [job && job.kind, job && job.step].filter(Boolean).join(' · ');
+    return `部署进行中（${detail}），请等待完成后再${action}`;
+  }
+
+  /**
+   * Reject mutating an app whose deploy job is live.
    * @param {number} appId
    * @param {string} action verb appended to the message, e.g. '删除'
    * @throws {Error} err.status = 409
@@ -305,7 +331,7 @@ class DeployJobs {
   static async assertIdle(appId, action) {
     const job = await this.activeJob(appId);
     if (!job) return;
-    const err = new Error(`部署进行中（${job.kind} · ${job.step}），请等待完成后再${action}`);
+    const err = new Error(this.busyMessage(job, action));
     err.status = 409;
     throw err;
   }

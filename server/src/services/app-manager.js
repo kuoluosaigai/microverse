@@ -3,6 +3,11 @@ const pathHelper = require('../utils/path-helper');
 const ProcessManager = require('./process-manager');
 const NpmLifecycle = require('./npm-lifecycle');
 const ProxyManager = require('./proxy-manager');
+// Task 8: the deploy summary is attached alongside `git`, so AppManager needs
+// DeployJobs.isLive. Safe at module load — deploy-jobs' own require graph is
+// leaves (db/config/utils) and it reaches back here only lazily (update-
+// manager is the lazy one, never app-manager), so no cycle can form.
+const DeployJobs = require('./deploy-jobs');
 const { isValidAppName } = require('../utils/validate-app-name');
 const { validateGitUrl, validateGitBranch } = require('../utils/validate-git-source');
 const crypto = require('crypto');
@@ -22,6 +27,24 @@ function toGitSummary(row) {
     synced_at: row.synced_at,
     last_status: row.last_status,
     last_error: row.last_error
+  };
+}
+
+// Public shape of an app's deploy job (current or most recent), attached to
+// every app object next to the git summary. camelCase by contract — no
+// snake_case column, and no pid/log_path, leaks to the client. `live` is
+// DeployJobs.isLive's verdict, never a status-name check (a dead-owner row
+// must not hold the client's UI in a fake "deploying" state).
+function toDeploySummary(row) {
+  if (!row) return null;
+  return {
+    kind: row.kind,
+    status: row.status,
+    step: row.step,
+    message: row.message,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    live: DeployJobs.isLive(row)
   };
 }
 
@@ -129,22 +152,32 @@ class AppManager {
       queries.getAllApps(),
       queries.getAllAppGitSources()
     ]);
+    // One batched read for every app's job — the ids are only known after the
+    // first round-trip, but the read itself never scales with N (the summary
+    // exists precisely to keep the list endpoint off a per-app N+1).
+    const jobs = await queries.getDeployJobsByAppIds(apps.map(app => app.id));
     const sourceByAppId = new Map(sources.map(source => [source.app_id, source]));
-    return apps.map(app => ({ ...app, git: toGitSummary(sourceByAppId.get(app.id)) }));
+    const jobByAppId = new Map(jobs.map(job => [job.app_id, job]));
+    return apps.map(app => ({
+      ...app,
+      git: toGitSummary(sourceByAppId.get(app.id)),
+      deploy: toDeploySummary(jobByAppId.get(app.id))
+    }));
   }
 
   /**
    * Get application by ID
    */
   static async getAppById(id) {
-    const [app, source] = await Promise.all([
+    const [app, source, job] = await Promise.all([
       queries.getAppById(id),
-      queries.getAppGitSource(id)
+      queries.getAppGitSource(id),
+      queries.getDeployJob(id)
     ]);
     if (!app) {
       throw new Error('App not found');
     }
-    return { ...app, git: toGitSummary(source) };
+    return { ...app, git: toGitSummary(source), deploy: toDeploySummary(job) };
   }
 
   /**

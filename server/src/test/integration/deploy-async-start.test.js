@@ -63,27 +63,30 @@ async function waitForJob(appId, { timeoutMs = 3000 } = {}) {
   }
 }
 
-test('POST /start returns 202 immediately while install is still running', async () => {
+test('POST /start returns 202 without waiting for the deploy to be released', async () => {
   const app = await makeApp('async-start-202');
   stubClaimEnvironment();
+  // Machine-speed independent timing (Task 6 review): the fake deployApp
+  // parks on a deferred the TEST owns instead of sleeping. The 202 must
+  // arrive while the deploy is demonstrably unfinished; if anyone reverts
+  // the route to await the job, this request hangs until the runner kills
+  // the test — deterministic red, never a flaky false red on loaded CI.
+  let releaseDeploy;
+  const gate = new Promise((resolve) => { releaseDeploy = resolve; });
   const deployMock = mock.method(DeployManager, 'deployApp', async () => {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await gate;
     return AppManager.getAppById(app.id);
   });
 
   const agent = await adminAgent();
-  const startedAt = Date.now();
   const res = await agent.post(`/api/apps/${app.id}/start`);
-  const elapsed = Date.now() - startedAt;
 
   assert.equal(res.status, 202);
-  // The whole point of the task: the response must NOT wait for the deploy.
-  // A faked deployApp hangs for 500ms, so any awaited variant blows past this.
-  assert.ok(elapsed < 200, `202 took ${elapsed}ms — the route waited for the deploy`);
   assert.equal(res.body.success, true);
   assert.deepEqual(res.body.data, { app_id: app.id, kind: 'start', status: 'running' });
 
-  // The 202 is backed by a real claimed job.
+  // The 202 is backed by a real claimed job — still running, because the
+  // deploy is parked on the deferred and nothing has released it yet.
   const job = await queries.getDeployJob(app.id);
   assert.equal(job.status, 'running');
   assert.equal(job.kind, 'start');
@@ -96,6 +99,9 @@ test('POST /start returns 202 immediately while install is still running', async
   assert.ok(options.logFile.startsWith(tmp));
   assert.ok(fs.existsSync(options.logFile));
 
+  // Release the parked deploy only after every 202-side assertion above has
+  // run — the response could not have waited for the work.
+  releaseDeploy();
   await waitForJob(app.id);
   assert.equal(deployMock.mock.callCount(), 1);
 });
@@ -103,8 +109,13 @@ test('POST /start returns 202 immediately while install is still running', async
 test('a second start while the job is live returns 409', async () => {
   const app = await makeApp('async-start-busy');
   stubClaimEnvironment();
+  // Same deferred shape as the 202 test (Task 6 review): the job is held
+  // live by a park the test controls, so "second request lands inside the
+  // live window" is structural, not a race against a 400ms sleep.
+  let releaseDeploy;
+  const gate = new Promise((resolve) => { releaseDeploy = resolve; });
   const deployMock = mock.method(DeployManager, 'deployApp', async () => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await gate;
     return AppManager.getAppById(app.id);
   });
 
@@ -116,6 +127,7 @@ test('a second start while the job is live returns 409', async () => {
   assert.match(second.body.error.message, /部署进行中/);
   assert.match(second.body.error.message, /start/);
 
+  releaseDeploy();
   await waitForJob(app.id);
   // The rejected second request never started a second deploy.
   assert.equal(deployMock.mock.callCount(), 1);
@@ -125,8 +137,10 @@ test('already-running app still returns 400 synchronously', async () => {
   const app = await makeApp('async-start-running');
   stubClaimEnvironment();
   const deployMock = mock.method(DeployManager, 'deployApp', async () => AppManager.getAppById(app.id));
-  // The ONLY way to produce "running" in tests: reconcileStatus falls back to
-  // the DB status when the PM2 CLI probe fails (pm2Exec is stubbed to ENOENT).
+  // The ONLY way to produce "running" in tests: reconcileStatus asks
+  // getProcessStatus, and the stub below answers online. (It is NOT the
+  // pm2Exec-ENOENT fallback to the DB status — under that mechanism the DB
+  // would stay 'stopped' and this route would never reach the 400.)
   mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: true, status: 'online' }));
 
   const agent = await adminAgent();
@@ -201,10 +215,9 @@ test('the job converges to failed with the npm message when deployApp rejects', 
   // ctx.report really is DeployJobs.advance: the step the faked deploy
   // reported survived the rejection path.
   assert.equal(job.step, 'install');
-  // A successful finish clears nothing here, but a failure must not leave the
-  // app looking running either.
-  const row = await queries.getAppById(app.id);
-  assert.equal(row.status, 'stopped');
+  // The old tail ("app row must still read stopped") was dropped: on this
+  // mocked path no code ever writes the app row (finish touches the job
+  // table only), so it could not fail — a tautological assertion.
 });
 
 test('deployApp rejection never produces an unhandled rejection', async () => {

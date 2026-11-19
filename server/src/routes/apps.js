@@ -81,6 +81,32 @@ router.get('/apps/:id/metrics', async (req, res, next) => {
   }
 });
 
+// Current deploy-job state + a bounded tail of the job log — the endpoint
+// that turns a 202 into visible progress (the dashboard's 10s poll reads it;
+// a polled tail was chosen over a log stream deliberately, no SSE here).
+// `job` is EXACTLY the `deploy` summary attached to every app object (one
+// producer, AppManager's toDeploySummary), and the tail reuses DeployJobs.tail
+// (bounded default 200 lines / 64KB, ANSI-stripped, quiet [] when the row,
+// the path or the file is missing — reading a log must never fail the request).
+router.get('/apps/:id/deploy', async (req, res, next) => {
+  try {
+    const app = await AppManager.getAppById(req.params.id); // 404 'App not found'
+    const logTail = await DeployJobs.tail(app.id);
+    res.json({
+      success: true,
+      data: { job: app.deploy, logTail }
+    });
+  } catch (error) {
+    if (error.message === 'App not found') {
+      return res.status(404).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    next(error);
+  }
+});
+
 // Download a backup zip of an app (files + manifest)
 router.get('/apps/:id/backup', async (req, res, next) => {
   try {
@@ -270,9 +296,21 @@ router.post('/apps/:id/start', async (req, res, next) => {
           error: { message: '平台正在自更新，请稍后再试' }
         });
       }
+      // 'busy': another worker's live job won the atomic claim. Read the row
+      // that beat us and render it through the ONE busy-message producer
+      // (DeployJobs.busyMessage) — Task 6 had this branch hand-copying
+      // assertIdle's format and dropping the `· <step>` part. A row gone at
+      // this instant means the app was deleted mid-race: same 404 as 'gone'.
+      const busyJob = await queries.getDeployJob(app.id);
+      if (!busyJob) {
+        return res.status(404).json({
+          success: false,
+          error: { message: 'App not found' }
+        });
+      }
       return res.status(409).json({
         success: false,
-        error: { message: `部署进行中（${DeployJobs.KINDS.START}），请等待完成后再启动` }
+        error: { message: DeployJobs.busyMessage(busyJob, '启动') }
       });
     }
 

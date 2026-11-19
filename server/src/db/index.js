@@ -240,8 +240,14 @@ const queries = {
   // Owner-fenced (`AND pid = ?`): a job stolen through the stale window must
   // not be steppable by the original owner still running with its old handle —
   // DeployJobs passes process.pid so only the current pid-owner's writes land.
+  // Terminal-fenced (`AND status = 'running'`): runner step reports are
+  // fire-and-forget and node-sqlite3 runs statements in parallel absent
+  // serialize(), so a slow advance can land AFTER finish() terminated the
+  // row — without this guard it would rewrite the terminal step (a succeeded
+  // job back off 'done', a failed one off its death step) on a row whose
+  // outcome is already final.
   updateDeployJobStep: (appId, step, pid) => dbRun(
-    'UPDATE app_deploy_job SET step = ? WHERE app_id = ? AND pid = ?',
+    "UPDATE app_deploy_job SET step = ? WHERE app_id = ? AND pid = ? AND status = 'running'",
     [step, appId, pid]
   ),
 
@@ -260,13 +266,20 @@ const queries = {
   // losing the finish race against deleteApp's cascade.
   // Owner-fenced (`AND pid = ?`): without it, the previous owner of a stolen
   // stale job could terminate the NEW owner's in-flight run on its way out.
-  finishDeployJob: (appId, { status, message, pid } = {}) => dbRun(
+  // `step` is optional: passing it lands the terminal step in the SAME UPDATE
+  // as status/finished_at (DeployJobs.finish passes 'done' only for ok:true —
+  // there is no finish-then-advance window a late report could slip into);
+  // omitting it (COALESCE keeps the old value) is what boot convergence and
+  // failure paths do, so an interrupted or failed job keeps pointing at the
+  // step it actually died on and never claims 'done'.
+  finishDeployJob: (appId, { status, message, step, pid } = {}) => dbRun(
     `UPDATE app_deploy_job SET
        status = ?,
        message = ?,
+       step = COALESCE(?, step),
        finished_at = CURRENT_TIMESTAMP
      WHERE app_id = ? AND pid = ?`,
-    [status, message ?? null, appId, pid]
+    [status, message ?? null, step ?? null, appId, pid]
   ),
 
   // Jobs still 'running' — boot-time convergence input (crashed worker left
