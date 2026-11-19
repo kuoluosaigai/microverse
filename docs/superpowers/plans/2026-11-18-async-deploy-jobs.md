@@ -764,6 +764,17 @@ git commit -m "feat(update): refuse updates while an app deploy is in flight"
 之间没有槽位，`nginx -t` 挂住时 UI 会显示"校验文件中" —— 与刚修掉的 git 冒名同一类故障。
 中英双语都必须补：`appCard.deploy.step.nginx` = `预检 nginx 配置` / `validating nginx config`。
 
+**`GitModal` 的具体落点（已读到源码，别按推测改）**：`client/src/components/GitModal.jsx:203-218` 的
+`pull()` 现在是 `await pullAppGit(appId)` → **无条件** `message.success(t('git.pullSuccess'))` → `load()`，
+它把响应体整个丢掉，所以任何 2xx 都被当作"拉取完成"。异步化后必须改成：
+202 只代表"已提交" ⇒ 进入轮询态（照 `UpdateModal.jsx:85-100` 已有的 `closedRef`/`intervalRef` 模式，
+只对活跃任务恢复轮询、终态停轮询、关闭必须清 timer），收敛成成功才 `pullSuccess`、失败给 `pullFailed` + 日志入口。
+`pulling` 的本地重入保护可以保留，但**真互斥现在由服务端 409 保证**，别把它当锁。
+
+i18n 落点：`client/src/i18n/locales/{zh,en}.json` 顶层已有 `appCard`（其 `status` 现在只有
+`running`/`stopped` 两个值）、`git`、`update`、`messages` 等命名空间；新增键统一走
+`appCard.deploy.step.*` 与 `appCard.deploy.*`，**zh/en 两边都要加，缺一个就会渲染成原始 key**。
+
 - [ ] **Step 3: 实现 DeployLogDrawer** —— 打开时每 2s 轮询 `GET /api/apps/:id/deploy`，`<pre>` 渲染 `logTail`，任务终态后停止轮询并保留最后一段输出。关闭抽屉必须 `clearInterval`（照 `UpdateModal.jsx:91` 的既有做法）。
 
 - [ ] **Step 4: lint + build**
