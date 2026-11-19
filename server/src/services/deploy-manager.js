@@ -65,9 +65,37 @@ class DeployManager {
   }
 
   /**
-   * Deploy an application (start it)
+   * Deploy an application (start it).
+   * @param {number|string} appId
+   * @param {{ onStep?: ((step: string) => void) | null, logFile?: string | null }} [options]
+   *   onStep — optional synchronous progress listener called with plain
+   *   step-name strings at the boundaries the [deploy-perf] laps below
+   *   measure, in the fixed order validate -> git -> install -> build ->
+   *   launch -> proxy (only steps that actually run are reported). logFile —
+   *   the deploy job's transcript path, forwarded to NpmLifecycle.ensureBuilt
+   *   so background npm install/build output lands on disk. Both default to
+   *   null; calling deployApp(appId) with no options behaves exactly as
+   *   before (every existing caller is untouched).
    */
-  static async deployApp(appId) {
+  static async deployApp(appId, { onStep = null, logFile = null } = {}) {
+    // onStep is pure observability: a listener that throws must never fail or
+    // corrupt the deploy — the same rule as the best-effort proxy regenerate
+    // below and the job log file upstream. Step names are bare string
+    // literals, deliberately NOT imported from deploy-jobs: the callback
+    // flows DOWNWARD here (the job runner passes it in), and deploy-jobs
+    // sits above this module in the call hierarchy, so a require would
+    // invert that direction for one constant list. DeployJobs.advance() is
+    // the validating side; these literals must stay in sync with
+    // DeployJobs.STEPS.
+    const report = (step) => {
+      if (!onStep) return;
+      try {
+        onStep(step);
+      } catch (_err) {
+        // ignore — progress reporting never touches the orchestration
+      }
+    };
+
     const deployStartedAt = Date.now();
     // Reconcile first: a crashed/removed PM2 process must not block a re-start
     // with "already running", and a live one must not be launched twice.
@@ -81,6 +109,14 @@ class DeployManager {
       throw new Error('App is already running');
     }
 
+    // The deploy work starts here. 'validate' is reported BEFORE the git
+    // block (which physically runs first) because the fixed step order —
+    // validate -> git -> install -> build -> launch -> proxy — is the
+    // contract DeployJobs.STEPS and the job UI are built on, and reporting
+    // it at validateAppDeployment itself would put 'git' ahead of 'validate'
+    // for every git-bound app. The actual validation follows the git work.
+    report('validate');
+
     // The DB claim is the cross-worker single-flight guard for everything that
     // touches the app directory (git → install/build → launch). It is held until
     // the process is up and released exactly once below (success or failure).
@@ -92,6 +128,9 @@ class DeployManager {
       gitClaimed = await queries.claimGitSync(appId, config.git.staleSyncMs);
       if (!gitClaimed) throw new Error('Update in progress');
       try {
+        // Reported immediately before the git work runs, so a slow/hung
+        // clone or fetch is visible as the current step.
+        report('git');
         const prepared = await GitLifecycle.prepareForStart(app, source);
         perf.lap('git-prepare(clone/fetch/reset/clean)');
         gitCommit = prepared.commit;
@@ -149,8 +188,10 @@ class DeployManager {
       if (app.deploy_type === 'npm') {
         // install/build run only when their fingerprint changed (or the step never
         // completed), so a plain stop→start doesn't reinstall + rebuild.
-        await NpmLifecycle.ensureBuilt(appId, app.path);
+        // ensureBuilt reports 'install'/'build' itself, only when each runs.
+        await NpmLifecycle.ensureBuilt(appId, app.path, { logFile, onStep });
         const env = await NpmLifecycle.resolveEnv(appId, app.port);
+        report('launch');
         await ProcessManager.startProcess(app, { env });
       } else if (app.deploy_type === 'nginx') {
         const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
@@ -158,8 +199,10 @@ class DeployManager {
         if (!result.ok) {
           throw new Error(result.message);
         }
+        report('launch');
         await ProcessManager.startProcess(app, { nginxConf: confPath });
       } else {
+        report('launch');
         await ProcessManager.startProcess(app);
       }
       perf.lap('launch(pm2 start)');
@@ -170,6 +213,7 @@ class DeployManager {
 
       // Best-effort: refresh the edge-proxy routes so this app's subdomain is
       // reachable. Never let a proxy problem block the deploy.
+      report('proxy');
       try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
       perf.lap('proxy regenerate');
     } catch (err) {

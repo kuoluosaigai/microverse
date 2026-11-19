@@ -155,17 +155,42 @@ class NpmLifecycle {
    * dependencies/build output must still be repaired after the failed attempt.
    * @param {number} appId
    * @param {string} appPath
-   * @param {{ force?: boolean, logFile?: string|null }} [options] logFile is
-   *   the deploy job's log path (DeployJobs.claim() created it); install/build
-   *   output streams into it so a background job's transcript survives on disk.
-   *   null/undefined keeps the old in-memory-buffered behavior.
+   * @param {{ force?: boolean, logFile?: string|null, onStep?: ((step: string) => void)|null }} [options]
+   *   logFile is the deploy job's log path (DeployJobs.claim() created it);
+   *   install/build output streams into it so a background job's transcript
+   *   survives on disk. null/undefined keeps the old in-memory-buffered
+   *   behavior. onStep receives the plain literals 'install'/'build' — the
+   *   same names DeployJobs.STEPS uses — immediately before that step RUNS,
+   *   and never when a gate skips it (see the WHY comments inside); like
+   *   every logging/progress hook here, a throwing listener is swallowed and
+   *   can never fail the build.
    */
-  static async ensureBuilt(appId, appPath, { force = false, logFile = null } = {}) {
+  static async ensureBuilt(appId, appPath, { force = false, logFile = null, onStep = null } = {}) {
+    // Same contract as DeployManager.deployApp's report(): string literals,
+    // never imported from deploy-jobs (this module sits BELOW it; the
+    // callback flows downward), and a throwing listener must not break the
+    // install/build work any more than an unopenable log file can.
+    const report = (step) => {
+      if (!onStep) return;
+      try {
+        onStep(step);
+      } catch (_err) {
+        // ignore — progress reporting never touches the work
+      }
+    };
+
     const scope = path.basename(appPath);
     const state = await queries.getAppDeployState(appId);
     const mustInstall = force || this.needsInstall(appPath, state && state.install_fp);
     const installStartedAt = Date.now();
     if (mustInstall) {
+      // WHY only here (and only when it runs): the fingerprint gates skip
+      // `npm install` on a plain stop->start — gating behavior fixed by a
+      // real production bug (npm-deploy-gating is its regression net).
+      // Reporting 'install' unconditionally would park the UI badge on
+      // "installing" for a step that does 0ms of work and did nothing, a lie
+      // operators would quickly learn to distrust.
+      report('install');
       await this.install(appPath, { logFile });
       await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
       perfLine(scope, 'npm install', Date.now() - installStartedAt);
@@ -175,6 +200,20 @@ class NpmLifecycle {
     const mustBuild = force || mustInstall || this.needsBuild(appPath, state && state.build_fp);
     const buildStartedAt = Date.now();
     if (mustBuild) {
+      // build() no-ops for apps without a build script, so THAT case reports
+      // nothing either — same no-work-no-step rule as install above. This
+      // package.json read decides the REPORT only: the build() call, its
+      // error contract, and the fingerprint bookkeeping are unchanged, and
+      // an unreadable package.json simply reports nothing before build()
+      // throws its own 'package.json not found' / 'Invalid package.json'.
+      let hasBuildScript = false;
+      try {
+        const pkg = this.readPackageJson(appPath);
+        hasBuildScript = Boolean(pkg.scripts && typeof pkg.scripts.build === 'string');
+      } catch (_err) {
+        // fall through: build() below surfaces the real error
+      }
+      if (hasBuildScript) report('build');
       await this.build(appPath, { logFile }); // no-op when there is no build script
       await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
       perfLine(scope, 'npm run build', Date.now() - buildStartedAt);
