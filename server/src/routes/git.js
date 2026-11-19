@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const AppManager = require('../services/app-manager');
 const GitLifecycle = require('../services/git-lifecycle');
+const DeployJobs = require('../services/deploy-jobs');
+const { sendDeployConflict } = require('./deploy-conflict');
 const { queries } = require('../db');
 const {
   validateGitUrl,
@@ -85,6 +87,10 @@ router.put('/apps/:id/git', async (req, res, next) => {
     // (and especially resetGitSourceProgress, which clears sync_started_at)
     // would let the running pull write the old repo's commits onto the new one.
     await GitLifecycle.assertNotSyncing(app.id);
+    // A live deploy job clones/fetches and builds from THIS binding —
+    // rebinding mid-job makes the job deploy a source the operator has
+    // already replaced. Refuse until it finishes. (Task 7.)
+    await DeployJobs.assertIdle(app.id, '修改 Git 源');
     const body = req.body || {};
     const url = body.url;
 
@@ -131,6 +137,7 @@ router.put('/apps/:id/git', async (req, res, next) => {
   } catch (error) {
     if (error.message === 'App not found') return sendError(res, 404, error.message);
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -142,11 +149,16 @@ router.delete('/apps/:id/git', async (req, res, next) => {
     // Unbinding during a sync would delete the row the running pull is about
     // to finish against; refuse until it settles.
     await GitLifecycle.assertNotSyncing(app.id);
+    // Same reasoning as the bind route: a live deploy job still reads this
+    // binding (clone/build), so unbinding mid-job yanks it out from under
+    // the run. (Task 7.)
+    await DeployJobs.assertIdle(app.id, '解绑 Git 源');
     await queries.deleteAppGitSource(app.id);
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'App not found') return sendError(res, 404, error.message);
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -157,6 +169,13 @@ router.post('/apps/:id/git/secret', async (req, res, next) => {
     const app = await AppManager.getAppById(req.params.id);
     const source = await queries.getAppGitSource(app.id);
     if (!source) return sendError(res, 404, NO_SOURCE_MESSAGE);
+
+    // The 404 above still wins for an unbound app (nothing to rotate
+    // regardless of the job). Once there IS a secret, refuse while a
+    // deploy job is live: a GitHub delivery racing the job could trigger a
+    // sync against a secret the operator is mid-way through changing.
+    // (Task 7.)
+    await DeployJobs.assertIdle(app.id, '轮换密钥');
 
     // PASS the existing url: upsertAppGitSource sets url unconditionally.
     // Omitted branch/autoUpdate are preserved by its COALESCE columns.
@@ -171,6 +190,7 @@ router.post('/apps/:id/git/secret', async (req, res, next) => {
   } catch (error) {
     if (error.message === 'App not found') return sendError(res, 404, error.message);
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });

@@ -17,6 +17,7 @@ const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenTopDirs } = require('../utils/flatten-zip-root');
 const zipDecoder = require('../utils/zip-decoder');
 const { staleFilesToRemove, platformManagedNames } = require('../utils/stale-files');
+const { sendDeployConflict } = require('./deploy-conflict');
 const config = require('../config');
 const { queries } = require('../db');
 
@@ -166,6 +167,14 @@ router.post('/apps', async (req, res, next) => {
 // checked against PM2 truth, not a stale DB flag)
 router.delete('/apps/:id', async (req, res, next) => {
   try {
+    const app = await AppManager.getAppById(req.params.id);
+    // Guard BEFORE any delete work — placement is load-bearing. Removing the
+    // app row cascades to app_deploy_job, so a check AFTER deleteApp would
+    // find no job row left to refuse: the delete already succeeded and the
+    // background task goes on to `pm2 start` a process whose DB record is
+    // gone. (Task 7.)
+    await DeployJobs.assertIdle(app.id, '删除');
+
     const deleteFiles = req.query.deleteFiles === 'true';
     await DeployManager.deleteApp(req.params.id, { deleteFiles });
 
@@ -192,6 +201,7 @@ router.delete('/apps/:id', async (req, res, next) => {
         error: { message: error.message }
       });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -293,13 +303,9 @@ router.post('/apps/:id/start', async (req, res, next) => {
         error: { message: error.message }
       });
     }
-    // assertIdle and friends stamp the status to use (409 for deploy-in-progress).
-    if (error.status === 409) {
-      return res.status(409).json({
-        success: false,
-        error: { message: error.message }
-      });
-    }
+    // assertIdle and friends stamp err.status = 409; the response itself is
+    // produced by the one shared mapper (routes/deploy-conflict), not here.
+    if (sendDeployConflict(res, error)) return;
     // Expected pre-check failures (bad app input) -> 400. The full list is
     // kept for the synchronous checks above — validation messages and
     // 'already running' still arrive here — but install/build/git failures
@@ -330,11 +336,18 @@ router.post('/apps/:id/start', async (req, res, next) => {
 // Stop application
 router.post('/apps/:id/stop', async (req, res, next) => {
   try {
-    const app = await DeployManager.stopApp(req.params.id);
+    const app = await AppManager.getAppById(req.params.id);
+    // Refuse while a deploy job is live: the app is not running yet, so
+    // stopApp would be an idempotent no-op — and the job would then launch
+    // the app anyway. The operator pressed stop and the app started; the
+    // guard is the only thing that prevents exactly that. (Task 7.)
+    await DeployJobs.assertIdle(app.id, '停止');
+
+    const stopped = await DeployManager.stopApp(req.params.id);
 
     res.json({
       success: true,
-      data: app
+      data: stopped
     });
   } catch (error) {
     if (error.message === 'App not found') {
@@ -349,6 +362,7 @@ router.post('/apps/:id/stop', async (req, res, next) => {
         error: { message: error.message }
       });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -356,11 +370,17 @@ router.post('/apps/:id/stop', async (req, res, next) => {
 // Restart application
 router.post('/apps/:id/restart', async (req, res, next) => {
   try {
-    const app = await DeployManager.restartApp(req.params.id);
+    const app = await AppManager.getAppById(req.params.id);
+    // Same window as stop: a restart issued mid-deploy either races the
+    // job's own launch or (not-running yet) fails 400 while the job keeps
+    // going — neither answer describes what actually happened. Refuse.
+    await DeployJobs.assertIdle(app.id, '重启');
+
+    const restarted = await DeployManager.restartApp(req.params.id);
 
     res.json({
       success: true,
-      data: app
+      data: restarted
     });
   } catch (error) {
     if (error.message === 'App not found') {
@@ -381,6 +401,7 @@ router.post('/apps/:id/restart', async (req, res, next) => {
         error: { message: error.message }
       });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -541,6 +562,17 @@ router.post('/apps/:id/upload', async (req, res, next) => {
       });
     }
 
+    // Refuse while a deploy job is live: install/build are reading exactly
+    // this directory. The placement here is load-bearing — multer is invoked
+    // INSIDE this handler (not on the route chain), so guarding before its
+    // call means a refused upload writes zero bytes; guarding inside its
+    // callback would protect nothing. Accepted v1 residual (not a bug): the
+    // client is already streaming the body when we answer 409 — Node stops
+    // reading and Express ends the response, which browsers surface as an
+    // upload failure. No 100-continue negotiation; an upload during a
+    // deploy should be refused anyway.
+    await DeployJobs.assertIdle(app.id, '上传文件');
+
     // Set upload path for multer
     req.uploadPath = app.path;
 
@@ -677,6 +709,7 @@ router.post('/apps/:id/upload', async (req, res, next) => {
         error: { message: error.message }
       });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -697,6 +730,12 @@ router.get('/apps/:id/env', async (req, res, next) => {
 // Replace application environment variables
 router.put('/apps/:id/env', async (req, res, next) => {
   try {
+    const app = await AppManager.getAppById(req.params.id);
+    // Env is baked into the process at launch; writing it mid-deploy means
+    // the job may resolve a half-new set with no way to tell the operator
+    // which values actually shipped. Refuse until the job is done.
+    await DeployJobs.assertIdle(app.id, '修改环境变量');
+
     const { env } = req.body;
     const envError = validateEnvEntries(env);
     if (envError) {
@@ -710,6 +749,7 @@ router.put('/apps/:id/env', async (req, res, next) => {
     if (error.message === 'App not found') {
       return res.status(404).json({ success: false, error: { message: error.message } });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -718,14 +758,20 @@ router.put('/apps/:id/env', async (req, res, next) => {
 // clears any other app's flag first, then regenerates the edge config.
 router.put('/apps/:id/default', async (req, res, next) => {
   try {
-    await AppManager.getAppById(req.params.id); // 404 if missing
-    const app = await queries.setDefaultApp(Number(req.params.id));
+    const target = await AppManager.getAppById(req.params.id); // 404 if missing
+    // The proxy step of a deploy runs with the CURRENT default flag;
+    // swapping the default mid-job would have the job regenerate the edge
+    // from a routing table that no longer matches the operator's intent —
+    // and its launch-time snapshot wins over the newer choice.
+    await DeployJobs.assertIdle(target.id, '设为默认');
+    const app = await queries.setDefaultApp(target.id);
     try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after set-default failed: ${e.message}`); }
     res.json({ success: true, data: app });
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({ success: false, error: { message: error.message } });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
@@ -733,14 +779,18 @@ router.put('/apps/:id/default', async (req, res, next) => {
 // Clear this app's root-domain default, then regenerate.
 router.delete('/apps/:id/default', async (req, res, next) => {
   try {
-    await AppManager.getAppById(req.params.id);
-    await queries.updateApp({ id: Number(req.params.id), is_default: 0 });
+    const target = await AppManager.getAppById(req.params.id);
+    // Same race as set-default in the other direction: the job's proxy
+    // step could re-add the root route this call is trying to remove.
+    await DeployJobs.assertIdle(target.id, '取消默认');
+    await queries.updateApp({ id: target.id, is_default: 0 });
     try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after clear-default failed: ${e.message}`); }
     res.json({ success: true, data: { message: 'Default cleared' } });
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({ success: false, error: { message: error.message } });
     }
+    if (sendDeployConflict(res, error)) return;
     next(error);
   }
 });
