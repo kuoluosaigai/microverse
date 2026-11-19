@@ -593,6 +593,14 @@ git commit -m "feat(update): refuse updates while an app deploy is in flight"
 
 - [ ] **Step 2: 实现 AppRow** —— `deploy.live` 时状态列显示 `● 部署中 · <step 文案>`，其它写入口 `disabled`（不隐藏，保持列宽稳定，规格决策 6 的草图）；`!live && deploy.status==='failed'` 时行内显示 `✖ message` + 一个"日志"入口。`Dashboard.handleStart` 改成 `await startApp(id)` 后立即 `loadApps(true)`，`startingId` 的清除改由服务端 `deploy.live` 决定（刷新页面也回得来）。
 
+**步骤词表（Task 5/5b 落地后的真实值，比规格里多一个 `nginx`）**：
+`queued → git → validate → install → build → nginx → launch → proxy → done`。
+数组顺序 == 上报顺序 == 真实执行顺序，所以"第 N 步 / 共 M 步"可直接用 `indexOf(step) + 1`，
+分母取 `DEPLOY_STEPS.length - 2`（去掉 `queued` 与 `done`）。
+`nginx` 是 Task 5 审查后新增的：nginx 类应用的 `generateConfig`/`testConfig` 原本夹在 `validate` 与 `launch`
+之间没有槽位，`nginx -t` 挂住时 UI 会显示"校验文件中" —— 与刚修掉的 git 冒名同一类故障。
+中英双语都必须补：`appCard.deploy.step.nginx` = `预检 nginx 配置` / `validating nginx config`。
+
 - [ ] **Step 3: 实现 DeployLogDrawer** —— 打开时每 2s 轮询 `GET /api/apps/:id/deploy`，`<pre>` 渲染 `logTail`，任务终态后停止轮询并保留最后一段输出。关闭抽屉必须 `clearInterval`（照 `UpdateModal.jsx:91` 的既有做法）。
 
 - [ ] **Step 4: lint + build**
