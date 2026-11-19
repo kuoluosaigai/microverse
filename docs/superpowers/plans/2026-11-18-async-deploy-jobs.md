@@ -472,13 +472,46 @@ git commit -m "feat(api): refuse app mutations while a deploy job is live"
 
 **Files:**
 - Modify: `server/src/services/app-manager.js:125-148`（`getAllApps` / `getAppById`）
-- Modify: `server/src/routes/apps.js`（新增只读端点）
+- Modify: `server/src/routes/apps.js`（新增只读端点 + Task 6 遗留的三条未测分支）
+- Modify: `server/src/services/deploy-jobs.js`（`finish` 写 `done`；busy-409 文案抽成唯一生产者）
+- Modify: `server/src/db/index.js`（`updateDeployJobStep` 加终态守卫）
 - Test: `server/src/test/integration/deploy-status-api.test.js`（新建）
 
 **Interfaces:**
 - Consumes: Task 1 `getDeployJobsByAppIds`、Task 2 `tail`、Task 3 的收敛结果
 - Produces: 应用对象新增 `deploy` 字段：`{ kind, status, step, message, startedAt, finishedAt, live } | null`；
   `GET /api/apps/:id/deploy -> { success:true, data:{ job: <同上>, logTail: string[] } }`
+
+- [ ] **Step 0: 先修 Task 6 审查查出的两个真缺陷**（都在本任务要动的文件里，另开一轮不划算）
+
+```js
+test('a succeeded job ends on the done step', ...)
+  // finish({ok:true}) 之后行的 step 必须是 'done'，否则成功的任务永远停在最后跑过的那一步
+test('a failed job keeps the step it failed on', ...)
+  // 失败时不得盖掉 step —— Task 6 的 'install' 断言依赖这一点，不能回退
+test('a late advance cannot overwrite a terminal row', ...)
+  // 命门：report 是 fire-and-forget，且 node-sqlite3 不 serialize() 时并行执行语句 ——
+  // finish 写完 done 之后，一次迟到的 advance('proxy') 仍可能落库把 step 盖回去。
+  // 先 finish({ok:true})，再调 advance(appId,'proxy')，断言 step 仍是 'done'、changes===0。
+```
+
+实现要求：`updateDeployJobStep` 的 WHERE 追加 `AND status = 'running'`（终态守卫，与已有的 pid fence 并列）；
+`finish(appId,{ok:true})` 同时写 `step='done'`；`finish(appId,{ok:false,...})` 保留原 step 不动。
+
+- [ ] **Step 0b: 把 busy-409 文案抽成唯一生产者**
+
+Task 6 在 start 路由里手抄了一份 `assertIdle` 的消息格式且**少了 `· <step>`**，
+于是同一种 409 现在有两个生产者、两种文案 —— Task 11 做 i18n 时必然漂移。
+改成 `DeployJobs` 导出一个 `busyMessage(job, action)`（或等价形式），
+`assertIdle` 与路由的 `claim` 失败分支共用它。补一条断言：两条路径产出的消息格式一致。
+
+- [ ] **Step 0c: 补 Task 6 遗留的三条分支测试**（`routes/apps.js`，本任务正好动这个文件）
+
+```js
+test('claim reason gone yields 404 and never starts a background deploy', ...)
+test('claim reason updating yields 409 with the self-update wording', ...)
+test('an unknown app id yields 404 without claiming', ...)
+```
 
 - [ ] **Step 1: 写失败测试**
 
@@ -497,12 +530,12 @@ test('GET /apps/:id/deploy on an unknown app is 404', ...)
 
 - [ ] **Step 3: 实现** —— 附带形状与 `git` 摘要完全对称（`app-manager.js:133` 的 `Promise.all` + Map by id；`toGitSummary` 旁边放一个 `toDeploySummary`），camelCase 输出、`live` 用 `DeployJobs.isLive` 计算。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（7 tests）；全量绿
+- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（13 tests = Step 0 的 3 + Step 0b 的 1 + Step 0c 的 3 + Step 1 的 7）；全量绿，且 Task 6 的 8 条异步测试必须原样绿
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add server/src/services/app-manager.js server/src/routes/apps.js server/src/test/integration/deploy-status-api.test.js
+git add server/src/services/app-manager.js server/src/services/deploy-jobs.js server/src/db/index.js server/src/routes/apps.js server/src/test/integration/deploy-status-api.test.js
 git commit -m "feat(api): expose deploy job state and log tail to the client"
 ```
 
@@ -519,6 +552,19 @@ git commit -m "feat(api): expose deploy job state and log tail to the client"
 **Interfaces:**
 - Consumes: Task 2/4/5 与 Task 6 的 `DeployRunner.startBackground`
 - Produces: `GitLifecycle.sync(app, { reason, logFile = null, onStep = null } = {})`；`POST .../git/pull -> 202 { app_id, kind:'pull', status:'running' }`
+
+- [ ] **Step 0: 顺手补 Task 6 审查查出的 runner 覆盖缺口**（本任务正是 runner 的第二个用户，改动落在同一文件）
+
+```js
+test('a rejecting finish does not produce an unhandled rejection', ...)
+  // Task 6 审查指出：把 deploy-runner.js 里 bookkeeping 的 .catch 整段删掉，全套测试仍绿 ——
+  // 而"后台任务的异常收敛"正是本特性的核心不变式，这条腿现在没人守。
+  // 做法：mock.method(DeployJobs,'finish') 让其 reject 一次，断言无 unhandledRejection，
+  // 且行留在非终态（交由启动收敛兜底），不要求 finish 自己成功。
+test('a thrown object with a hostile toString still converges to failed', ...)
+  // messageFrom 里 String(error) 可能自己抛，从而跳过 finish ⇒ 行卡在 running 直到陈旧窗口。
+  // 用 try/catch + 兜底字面量关掉这条离奇路径。
+```
 
 - [ ] **Step 1: 写失败测试**
 
