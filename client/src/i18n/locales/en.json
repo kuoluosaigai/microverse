@@ -138,6 +138,7 @@
       "log": "View log",
       "drawerTitle": "Deploy log",
       "logEmpty": "No deploy output yet",
+      "pollError": "Could not fetch deploy status — log polling stopped",
       "step": {
         "queued": "Queued",
         "git": "syncing Git repository",

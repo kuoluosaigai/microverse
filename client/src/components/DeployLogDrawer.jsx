@@ -13,11 +13,20 @@ function DeployLogDrawer({ appId, appName, open, onClose }) {
   const { t } = useTranslation()
   const [job, setJob] = useState(null)
   const [logTail, setLogTail] = useState([])
+  // Fatal-stop reason (401/404 etc.). Without it the poller dying silently
+  // looks like "the log vanished" instead of a permission/resource failure.
+  const [pollError, setPollError] = useState(null)
   // UpdateModal's pattern: a ref-based guard so in-flight polls cannot write
   // state after close/unmount, and a single interval handle that every stop
   // path clears.
   const intervalRef = useRef(null)
   const closedRef = useRef(false)
+  // Keep `t` out of the poll's deps (UpdateModal.jsx:36-41): the language at
+  // the moment the error renders, not the moment the poller was created.
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current !== null) {
@@ -33,6 +42,7 @@ function DeployLogDrawer({ appId, appName, open, onClose }) {
       if (closedRef.current) return
       const next = data?.job ?? null
       setJob(next)
+      setPollError(null)
       setLogTail(Array.isArray(data?.logTail) ? data.logTail : [])
       // Terminal (or the row vanished with the app): stop ticking but KEEP the
       // last tail on screen, so a finished deploy stays readable.
@@ -48,6 +58,9 @@ function DeployLogDrawer({ appId, appName, open, onClose }) {
       const fatal = status === 400 || status === 401 || status === 403 || status === 404
       if (!fatal) return
       stopPolling()
+      // UpdateModal shows the server text when it has one, else a local
+      // fallback — a stopped poller must say why it stopped.
+      setPollError(err.response?.data?.error?.message || tRef.current('appCard.deploy.pollError'))
     }
   }, [appId, stopPolling])
 
@@ -56,6 +69,7 @@ function DeployLogDrawer({ appId, appName, open, onClose }) {
     // Fresh open: drop the previous snapshot before the first fetch lands.
     setJob(null)
     setLogTail([])
+    setPollError(null)
     closedRef.current = false
     poll()
     if (intervalRef.current === null) {
@@ -79,6 +93,11 @@ function DeployLogDrawer({ appId, appName, open, onClose }) {
       open={open}
       onClose={onClose}
     >
+      {pollError && (
+        <div style={{ marginBottom: 12, color: '#cf1322', fontFamily: 'var(--mono)', fontSize: 12 }}>
+          {`✖ ${pollError}`}
+        </div>
+      )}
       {job && job.live && (
         <div style={{ marginBottom: 12, color: 'var(--accent)', fontFamily: 'var(--mono)', fontSize: 12 }}>
           {`● ${t('appCard.deploy.live')}${stepLabel ? ` · ${stepLabel}` : ''}`}

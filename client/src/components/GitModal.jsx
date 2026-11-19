@@ -63,6 +63,13 @@ function GitModal({ open, app, onClose, onChanged }) {
   // 'git': we are only watching a sync someone else started (webhook), so
   // the git summary's last_status is the only thing that may be trusted.
   const pullOwnerRef = useRef(null)
+  // UpdateModal.jsx:36-41 idiom: the interval captures the pollPull created
+  // at start, so convergence toasts must read `t` through a ref — otherwise
+  // switching language mid-pull toasts in the OLD language.
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   // Async operations can settle after the modal closed (destroyOnClose unmounts
   // the Form). Writing to an unconnected form logs a React warning, so only
@@ -258,16 +265,16 @@ function GitModal({ open, app, onClose, onChanged }) {
     setPullJob(null)
     if (ok) {
       setPullFailed(false)
-      message.success(t('git.pullSuccess'))
+      message.success(tRef.current('git.pullSuccess'))
     } else {
       setPullFailed(true)
-      message.error(t('git.pullFailed'))
+      message.error(tRef.current('git.pullFailed'))
     }
     // Refresh the git summary (deployed commit / last_status) after the job —
     // never before it converges.
     load()
     onChanged?.()
-  }, [stopPullPolling, t, load, onChanged])
+  }, [stopPullPolling, load, onChanged])
 
   const pollPull = useCallback(async () => {
     if (!openRef.current || pullOwnerRef.current === null) {
@@ -299,13 +306,23 @@ function GitModal({ open, app, onClose, onChanged }) {
       }
       const job = data?.job ?? null
       if (job && job.kind === 'pull') {
+        // KNOWN GAP, not handled here (comment only — honest wording): if
+        // OUR pull converged and another tab claimed a NEW pull for the same
+        // app within this one-fetch-delay window, this branch sees the
+        // INTRUDER's live pull row, keeps polling, and settles with the
+        // INTRUDER's outcome as if it were ours. The handover below covers
+        // only non-pull replacements (kind mismatch) or a vanished row; a
+        // pull→pull takeover is indistinguishable from ours because neither
+        // the 202 body nor the summary carries a job identity — the real fix
+        // is a server-side job id and is out of this task's scope.
         setPullJob(job.live ? job : null)
         if (!job.live) settlePull(job.status === 'succeeded')
         return
       }
       // Row gone (app deleted — the next getAppGit 404 ends it) or already
-      // taken over by a newer job, which implies ours finished unseen:
-      // hand convergence to the git summary.
+      // taken over by a NEWER job OF ANOTHER KIND, which implies ours
+      // finished unseen: hand convergence to the git summary. (Pull→pull
+      // takeover is NOT this branch — see the known gap above.)
       pullOwnerRef.current = 'git'
     } catch (error) {
       if (!openRef.current) {
@@ -322,9 +339,9 @@ function GitModal({ open, app, onClose, onChanged }) {
       pullOwnerRef.current = null
       setPulling(false)
       setPullJob(null)
-      message.error(errorMessage(error, t('git.pullFailed')))
+      message.error(errorMessage(error, tRef.current('git.pullFailed')))
     }
-  }, [appId, stopPullPolling, settlePull, fillForm, t])
+  }, [appId, stopPullPolling, settlePull, fillForm])
 
   const startPullPolling = useCallback(() => {
     if (!openRef.current) return

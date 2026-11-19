@@ -138,6 +138,7 @@
       "log": "看日志",
       "drawerTitle": "部署日志",
       "logEmpty": "暂无部署输出",
+      "pollError": "获取部署状态失败，日志轮询已停止",
       "step": {
         "queued": "排队中",
         "git": "同步 Git 仓库",

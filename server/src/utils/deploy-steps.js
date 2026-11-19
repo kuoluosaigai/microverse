@@ -16,7 +16,12 @@
  * name, so the sequence tests (deploy-step-reporting.test.js) are what keep
  * the producers honest. DeployJobs.STEPS re-exports THIS exact array, so the
  * list doubles as the progress ladder: within any reported run the indices
- * only move forward, and Task 11's "step N of M" is index + 1.
+ * only move forward. Task 11's "step N of M" pairing (client AppRow):
+ * the numerator is indexOf(step) with NO +1, and the denominator is
+ * length - 2, EXCLUDING the `queued` (index 0) and `done` (index 8)
+ * bookends — so `git` renders "1 of 7" … `proxy` renders "7 of 7". Adding 1
+ * to the numerator while dropping the bookends from the denominator (the
+ * plan's original wording, off by one) would render `proxy` as "8 of 7".
  */
 
 const DEPLOY_STEP = {

@@ -49,6 +49,19 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
   )
   const stepIndex = deploy && deploy.step ? DEPLOY_STEPS.indexOf(deploy.step) : -1
   const busyTitle = deploying ? t('appCard.deploy.busy') : undefined
+  // "Step N of M": the numerator is indexOf(step) WITHOUT +1, because the
+  // denominator excludes the `queued`/`done` bookends — the two sides must
+  // count the same 7 work phases (git=1 … proxy=7 of 7). The guard is also
+  // the assertion that a numerator can never exceed the denominator: the
+  // `queued` index (0) would otherwise render "第 1 步" and `done` (8)
+  // "第 8 步 / 共 7 步" (unreachable while live — finish() lands step='done'
+  // atomically with the terminal status — but pinned by code, not by trust).
+  // Unknown/out-of-range steps render no tooltip at all.
+  const DEPLOY_WORK_PHASES = DEPLOY_STEPS.length - 2
+  const progressTitle =
+    stepIndex > 0 && stepIndex <= DEPLOY_WORK_PHASES
+      ? t('appCard.deploy.progress', { current: stepIndex, total: DEPLOY_WORK_PHASES })
+      : undefined
 
   const [dirOpen, setDirOpen] = useState(false)
   const [files, setFiles] = useState([])
@@ -161,11 +174,7 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
         <div className="kind">{app.deploy_type}</div>
         <div
           className={`status ${deploying || isRunning ? 'live' : 'idle'}`}
-          title={
-            deploying && stepIndex >= 0
-              ? t('appCard.deploy.progress', { current: stepIndex + 1, total: DEPLOY_STEPS.length - 2 })
-              : undefined
-          }
+          title={deploying ? progressTitle : undefined}
         >
           {deploying
             ? `● ${t('appCard.deploy.live')}${deploy.step ? ` · ${t(`appCard.deploy.step.${deploy.step}`)}` : ''}`
