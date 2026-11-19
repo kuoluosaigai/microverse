@@ -1,5 +1,6 @@
 const { test, mock, before, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { queries, dbReady } = require('../helpers/setup');
@@ -10,6 +11,7 @@ const GitLifecycle = require('../../services/git-lifecycle');
 const NpmLifecycle = require('../../services/npm-lifecycle');
 const ProcessManager = require('../../services/process-manager');
 const ProxyManager = require('../../services/proxy-manager');
+const { DEPLOY_STEPS, DEPLOY_KINDS } = require('../../utils/deploy-steps');
 
 before(async () => { await dbReady; });
 afterEach(() => mock.reset());
@@ -219,6 +221,29 @@ test('a throwing onStep does not fail the deploy', async () => {
   } finally {
     await queries.deleteApp(app.id);
   }
+});
+
+test('utils/deploy-steps is a leaf: loading it pulls in no service', () => {
+  // The single-source-of-truth refactor is safe only because the constants
+  // module requires NOTHING upward: pin that as an assertion, not a comment.
+  // It must run in a CLEAN child process — this one already has every
+  // service in its require cache through helpers/setup — and a self-referential
+  // require of a constants file must never load deploy-jobs/deploy-manager.
+  const modulePath = require.resolve('../../utils/deploy-steps');
+  const probe = [
+    'require(process.argv[1]);',
+    'const services = Object.keys(require.cache)',
+    '  .map((p) => p.split(require("path").sep).join("/"))',
+    '  .filter((p) => p.includes("/src/services/"));',
+    'process.stdout.write(JSON.stringify(services));'
+  ].join('\n');
+  const loaded = execFileSync(process.execPath, ['-e', probe, modulePath], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(loaded), [],
+    'deploy-steps must not drag any service (deploy-jobs, deploy-manager, ...) into the require graph');
+  // And the shared list must be THE list DeployJobs re-exports, not a copy
+  // that can drift apart silently.
+  assert.deepEqual(DeployJobs.STEPS, DEPLOY_STEPS, 'DeployJobs.STEPS must be the utils constant');
+  assert.deepEqual(DeployJobs.KINDS, DEPLOY_KINDS, 'DeployJobs.KINDS must be the utils constant');
 });
 
 test('a skipped install/build reports no step for it', async () => {

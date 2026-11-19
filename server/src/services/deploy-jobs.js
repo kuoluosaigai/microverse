@@ -3,6 +3,7 @@ const path = require('path');
 const { queries } = require('../db');
 const config = require('../config');
 const pathHelper = require('../utils/path-helper');
+const { DEPLOY_STEPS, DEPLOY_KINDS } = require('../utils/deploy-steps');
 
 // Lazy require (git-lifecycle.js pattern): update-manager.js will require THIS
 // module once the self-update flow moves onto deploy jobs (Task 10). A
@@ -39,8 +40,13 @@ const ANSI_RE = /\x1B\[[0-?]*[ -/]*[@-~]/g;
  *     pid never enters a caller-visible signature.
  */
 class DeployJobs {
-  static KINDS = { START: 'start', PULL: 'pull' };
-  static STEPS = ['queued', 'validate', 'git', 'install', 'build', 'launch', 'proxy', 'done'];
+  // Step/kind names are DEFINED in utils/deploy-steps (the leaf module the
+  // services below the job layer also require — single source, no upward
+  // imports) and re-exported here unchanged: DeployJobs.STEPS and
+  // DeployJobs.KINDS remain the stable public API Task 2's tests and the
+  // later runner/UI tasks build on.
+  static KINDS = DEPLOY_KINDS;
+  static STEPS = DEPLOY_STEPS;
   static LOG_RETENTION = 5;
 
   /**

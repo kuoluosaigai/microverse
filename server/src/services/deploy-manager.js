@@ -8,6 +8,7 @@ const { queries } = require('../db');
 const config = require('../config');
 const { createExclusive } = require('../utils/serialize');
 const { createLapTimer, perfLine } = require('../utils/lap-timer');
+const { DEPLOY_STEP } = require('../utils/deploy-steps');
 
 // Marks an app row whose status reconcileStatus just flipped running->stopped
 // (and whose edge-proxy config was therefore already regenerated). Symbol keys
@@ -82,13 +83,11 @@ class DeployManager {
   static async deployApp(appId, { onStep = null, logFile = null } = {}) {
     // onStep is pure observability: a listener that throws must never fail or
     // corrupt the deploy — the same rule as the best-effort proxy regenerate
-    // below and the job log file upstream. Step names are bare string
-    // literals, deliberately NOT imported from deploy-jobs: the callback
-    // flows DOWNWARD here (the job runner passes it in), and deploy-jobs
-    // sits above this module in the call hierarchy, so a require would
-    // invert that direction for one constant list. DeployJobs.advance() is
-    // the validating side; these literals must stay in sync with
-    // DeployJobs.STEPS.
+    // below and the job log file upstream. Step names come from
+    // utils/deploy-steps (DEPLOY_STEP), the leaf module that ALSO defines
+    // DeployJobs.STEPS: this service requires DOWN into a constants file
+    // instead of importing upward from deploy-jobs, so the hierarchy stays
+    // acyclic by construction (pinned by a test, not a comment).
     const report = (step) => {
       if (!onStep) return;
       try {
@@ -124,7 +123,7 @@ class DeployManager {
       try {
         // Reported immediately before the git work runs, so a slow/hung
         // clone or fetch is visible as the current step.
-        report('git');
+        report(DEPLOY_STEP.GIT);
         const prepared = await GitLifecycle.prepareForStart(app, source);
         perf.lap('git-prepare(clone/fetch/reset/clean)');
         gitCommit = prepared.commit;
@@ -152,7 +151,7 @@ class DeployManager {
       // validation runs — the same "before the work" rule as every step here,
       // so a slow/hung disk check is visible as the current step even after
       // the git block above has completed.
-      report('validate');
+      report(DEPLOY_STEP.VALIDATE);
       const validation = await AppManager.validateAppDeployment(appId);
       perf.lap('validate(files on disk)');
       if (!validation.valid) {
@@ -189,7 +188,7 @@ class DeployManager {
         // ensureBuilt reports 'install'/'build' itself, only when each runs.
         await NpmLifecycle.ensureBuilt(appId, app.path, { logFile, onStep });
         const env = await NpmLifecycle.resolveEnv(appId, app.port);
-        report('launch');
+        report(DEPLOY_STEP.LAUNCH);
         await ProcessManager.startProcess(app, { env });
       } else if (app.deploy_type === 'nginx') {
         const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
@@ -197,10 +196,10 @@ class DeployManager {
         if (!result.ok) {
           throw new Error(result.message);
         }
-        report('launch');
+        report(DEPLOY_STEP.LAUNCH);
         await ProcessManager.startProcess(app, { nginxConf: confPath });
       } else {
-        report('launch');
+        report(DEPLOY_STEP.LAUNCH);
         await ProcessManager.startProcess(app);
       }
       perf.lap('launch(pm2 start)');
@@ -223,7 +222,7 @@ class DeployManager {
         const result = await ProxyManager.regenerate();
         proxySkipped = Boolean(result && result.skipped);
       } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
-      if (!proxySkipped) report('proxy');
+      if (!proxySkipped) report(DEPLOY_STEP.PROXY);
       perf.lap('proxy regenerate');
     } catch (err) {
       perfLine(app.name, 'deployApp FAILED after', perf.total(), err.message);

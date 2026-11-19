@@ -7,6 +7,7 @@ const { queries } = require('../db');
 const config = require('../config');
 const ProcessManager = require('./process-manager');
 const { perfLine } = require('../utils/lap-timer');
+const { DEPLOY_STEP } = require('../utils/deploy-steps');
 
 const execPromise = util.promisify(exec);
 const execFilePromise = util.promisify(execFile);
@@ -159,17 +160,17 @@ class NpmLifecycle {
    *   logFile is the deploy job's log path (DeployJobs.claim() created it);
    *   install/build output streams into it so a background job's transcript
    *   survives on disk. null/undefined keeps the old in-memory-buffered
-   *   behavior. onStep receives the plain literals 'install'/'build' — the
-   *   same names DeployJobs.STEPS uses — immediately before that step RUNS,
+   *   behavior. onStep receives DEPLOY_STEP.INSTALL / DEPLOY_STEP.BUILD —
+   *   the same names DeployJobs.STEPS exposes — immediately before that step RUNS,
    *   and never when a gate skips it (see the WHY comments inside); like
    *   every logging/progress hook here, a throwing listener is swallowed and
    *   can never fail the build.
    */
   static async ensureBuilt(appId, appPath, { force = false, logFile = null, onStep = null } = {}) {
-    // Same contract as DeployManager.deployApp's report(): string literals,
-    // never imported from deploy-jobs (this module sits BELOW it; the
-    // callback flows downward), and a throwing listener must not break the
-    // install/build work any more than an unopenable log file can.
+    // Same contract as DeployManager.deployApp's report(): names come from
+    // utils/deploy-steps (a leaf both modules require DOWN into — see the
+    // acyclicity note in deploy-manager), and a throwing listener must not
+    // break the install/build work any more than an unopenable log file can.
     const report = (step) => {
       if (!onStep) return;
       try {
@@ -190,7 +191,7 @@ class NpmLifecycle {
       // Reporting 'install' unconditionally would park the UI badge on
       // "installing" for a step that does 0ms of work and did nothing, a lie
       // operators would quickly learn to distrust.
-      report('install');
+      report(DEPLOY_STEP.INSTALL);
       await this.install(appPath, { logFile });
       await queries.setUpDeployState(appId, { installFp: this.installFingerprint(appPath) });
       perfLine(scope, 'npm install', Date.now() - installStartedAt);
@@ -213,7 +214,7 @@ class NpmLifecycle {
       } catch (_err) {
         // fall through: build() below surfaces the real error
       }
-      if (hasBuildScript) report('build');
+      if (hasBuildScript) report(DEPLOY_STEP.BUILD);
       await this.build(appPath, { logFile }); // no-op when there is no build script
       await queries.setUpDeployState(appId, { buildFp: this.buildFingerprint(appPath) });
       perfLine(scope, 'npm run build', Date.now() - buildStartedAt);
