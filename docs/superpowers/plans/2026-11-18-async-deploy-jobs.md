@@ -449,6 +449,14 @@ test('a dead-pid job does not hold the guard', ...)
 
 - [ ] **Step 3: 实现** —— 每个受保护 handler 在业务动作之前 `await DeployJobs.assertIdle(app.id, '<动作中文名>')`；错误映射沿用各文件里既有的 `if (error.message === 'Update in progress') return sendError(res, 409, ...)` 形状：新增 `err.status === 409` 的通用分支（`apps.js` 里在 `next(error)` 之前判 `error.status === 409`）。`deleteApp` 的保护必须放在 `AppManager.deleteApp` 之前，否则 CASCADE 会连着任务行一起删（决策 3 的原由）。
 
+  **upload 的保护位置（已核对代码，别凭直觉放）：** `POST /apps/:id/upload` **没有**把 multer 挂在路由中间件链上，
+  而是在 handler 内部先 `req.uploadPath = app.path`、再手动 `upload.array('files')(req, res, cb)`（`routes/apps.js:471`）。
+  所以保护放在 handler 顶部是**有效**的 —— 此刻 multer 还没打开任何写流，不会往应用目录落一个字节；
+  放在 multer 回调之后就是彻底无效的保护。
+  残留的取舍要写进注释而不是被当成 bug：客户端此时**已经在流式发送 body**，
+  提前 409 并不能阻止对端继续传字节（Node 侧不读体、Express 直接结束响应，浏览器会把它当成上传失败）。
+  v1 接受这个体验（部署中的上传本来就该被拒），不做 `100-continue` 之类的协商。
+
 - [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（12 tests）；全量绿
 
 - [ ] **Step 5: 提交**
