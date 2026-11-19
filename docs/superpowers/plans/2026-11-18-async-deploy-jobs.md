@@ -800,6 +800,8 @@ git commit -m "feat(client): show deploy job progress and gate actions while dep
   1. `POST /apps/{id}/start`：`200 + app` → **`202`** + `{app_id, kind, status}`，并补 `409`（任务忙 / git claim 忙 / 平台自更新）与 `400`（已在运行、非 git 应用缺入口文件）的语义；
   2. `POST /apps/{id}/git/pull`：`200 + {deployedCommit,status}` → **`202`**，结果改由 `git.last_status` 与任务摘要读；
   3. 新增 `GET /apps/{id}/deploy` → `{job, logTail}`（注明 `logTail` 服务端有界：默认 200 行 / 64KB，**不接受**客户端放大参数）；
+  3b. **`POST /system/update` 现在多了一种拒绝**：有活跃部署任务时返回 409
+      （`有应用正在部署（<app> · <step>），请等待完成`）—— Task 10 发现这一条没人记，必须补进 OpenAPI 与 CLAUDE.md。
   4. 应用对象 schema 新增 `deploy` 字段（`{kind,status,step,message,startedAt,finishedAt,live}|null`），
      并注明与既有 `git` 摘要同样的**附带范围限制**：只有 `GET /apps`、`GET /apps/:id`、`PUT /default` 等
      经 `getAllApps`/`getAppById` 的响应带它；`POST /apps` 创建响应**不带**（此时是 `undefined` 而非 `null`）——
