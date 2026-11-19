@@ -24,11 +24,24 @@ const execFilePromise = promisify(execFile);
 //     the production gate itself, never by what default the test env happens
 //     to have. helpers/setup sets NODE_ENV='test' unconditionally before it
 //     requires db, so an isolated child stays silent and only a leaky child
-//     (which never loads the helper) can print the line.
-//  2. Static: scan every *.test.js for module-load paths to src/db and require
-//     that helpers/setup (which points DB_PATH at a per-run temp dir) is
-//     required BEFORE the first such load — the house pattern documented in
-//     npm-fingerprints.test.js:6-8.
+//     (which never loads the helper) can print the line. NOTE: that silence
+//     also means a real leak under NODE_ENV=test no longer shows up anywhere
+//     in suite output — the printed path exists ONLY inside these pinned
+//     probe children, so this fence is now the sole detector; do not remove
+//     it, and do not "restore" unconditional boot logging to grep for leaks.
+//     Snapshot modifications are only blamed on tests when a probe child
+//     actually connected (a live platform can race the suite — see
+//     snapshotVerdict); file CREATION is always a failure.
+//  2. Static: scan every *.test.js two ways. (a) module-load paths: a file
+//     whose requires load src/db at module-load time must require
+//     helpers/setup BEFORE the first such load — the house pattern documented
+//     in npm-fingerprints.test.js:6-8. (b) lazy paths: a file reaching a
+//     module that requires src/db lazily (function-body require, today only
+//     services/git-lifecycle.js) can open the real DB at RUNTIME without any
+//     load-time db edge and without a visible log line; such a file must have
+//     helpers/setup, or be executed by the dynamic probe (membership in
+//     DYNAMIC_SUSPECTS is a tested isolation proof), or hold a whitelist entry
+//     with a reason. New lazy edges therefore cannot slip past silently.
 
 const UNIT_DIR = __dirname;
 const SRC_DIR = path.resolve(__dirname, '..', '..'); // server/src
@@ -209,6 +222,44 @@ function loadsDb(dep) {
   return dep === DB_INDEX || loadClosure(dep).has(DB_INDEX);
 }
 
+// Modules under src (outside the test tree) that require src/db only LAZILY —
+// a depth>0 require inside a function body. Today: services/git-lifecycle.js
+// (`function db() { return require('../db'); }`). This set is computed, not
+// hardcoded, so the day someone adds a second lazy-db module — or turns an
+// accessor into an eager require — the scan below notices without anyone
+// remembering to update a list.
+function findLazyDbModules() {
+  const found = new Set();
+  const testDir = path.join(SRC_DIR, 'test');
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (p !== testDir) walk(p);
+        continue;
+      }
+      if (!entry.name.endsWith('.js')) continue;
+      for (const r of scanRequires(fs.readFileSync(p, 'utf8'))) {
+        if (r.depth > 0 && resolveLocal(p, r.spec) === DB_INDEX) {
+          found.add(p);
+          break;
+        }
+      }
+    }
+  };
+  walk(SRC_DIR);
+  return found;
+}
+
+const LAZY_DB_MODULES = findLazyDbModules();
+const lazyReachMemo = new Map();
+function reachesLazyDb(dep) {
+  if (lazyReachMemo.has(dep)) return lazyReachMemo.get(dep);
+  const hit = LAZY_DB_MODULES.has(dep) || [...loadClosure(dep)].some((m) => LAZY_DB_MODULES.has(m));
+  lazyReachMemo.set(dep, hit);
+  return hit;
+}
+
 function listTestFiles(dir) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -221,8 +272,12 @@ function listTestFiles(dir) {
 
 // Files deliberately kept OFF helpers/setup. Each entry is an ASSERTION, not a
 // free pass: the scan fails if the file ever gains a require (at any depth)
-// whose closure loads src/db — meaning the reason below no longer holds — or
-// if someone adds the setup require anyway, silently undoing the design.
+// whose closure loads src/db — meaning the reason below no longer holds — if
+// someone adds the setup require anyway, silently undoing the design — or if
+// the file drops out of DYNAMIC_SUSPECTS, since running it under the probe is
+// what keeps a no-helper exemption honest at runtime (the static scan cannot
+// see lazy edges firing mid-test, and NODE_ENV=test silences the boot logs
+// even for real leaks, so the pinned probe children are the only detector).
 const DELIBERATE_NO_HELPER = {
   'git-lifecycle-repo.test.js':
     'services/git-lifecycle.js keeps db access behind a lazy function db() ' +
@@ -235,6 +290,8 @@ const DELIBERATE_NO_HELPER = {
 // ---------------------------------------------------------------------------
 // Test 1 — dynamic: run suspect files as isolated children and prove the real
 // data files stay untouched and unopened.
+// Membership doubles as the isolation proof the static scan accepts for files
+// that reach a lazy-db module without helpers/setup (see header, detector 2b).
 // ---------------------------------------------------------------------------
 const DYNAMIC_SUSPECTS = [
   'proxy-config.test.js',      // the confirmed leak (proxy-manager -> ../db)
@@ -252,7 +309,42 @@ function snapshot(file) {
   }
 }
 
-test('the whole suite never creates or modifies the repo data/microverse.sqlite', async () => {
+// Pure decision logic for the before/after snapshot of the developer's real
+// data files — extracted and unit-tested below so the fence cannot itself
+// become a flake source. Rationale (review Important 2): the premise of this
+// whole task is that the live platform may be running next to the suite —
+// MetricsSampler writes the metrics table every 10s and any admin login
+// writes the sessions DB, both changing size/mtime of the very files we
+// snapshot. A modification WITHOUT a probe child that actually connected is
+// therefore evidence about the machine, not about the tests, and must only be
+// reported. File CREATION (absent -> present) has no innocent explanation:
+// tests never delete the real DB, and a run that materializes it out of
+// nothing is exactly the fresh-checkout disaster Task 7 caught.
+function snapshotVerdict({ before, after, openersFound, label }) {
+  if (before === after) return null;
+  if (before === 'absent') {
+    return {
+      fail: true,
+      message: `${label} did not exist before the probe ran and exists after (${after}) — ` +
+        'a test process created the developer\'s real database file'
+    };
+  }
+  if (openersFound) {
+    return {
+      fail: true,
+      message: `${label} changed during the probe (${before} -> ${after}) while a probe ` +
+        'child had connected to the real database'
+    };
+  }
+  return {
+    fail: false,
+    message: `information only: ${label} changed during the probe (${before} -> ${after}) ` +
+      'although no probe child connected to it — most likely the live platform (metrics ' +
+      'sampler, session writes) raced this run; the tests are not blamed'
+  };
+}
+
+test('the whole suite never creates or modifies the repo data/microverse.sqlite', async (t) => {
   for (const f of DYNAMIC_SUSPECTS) {
     assert.ok(fs.existsSync(path.join(UNIT_DIR, f)), `suspect file ${f} must exist`);
   }
@@ -308,22 +400,37 @@ test('the whole suite never creates or modifies the repo data/microverse.sqlite'
   }
   assert.deepEqual(openers, [], 'these test files opened the developer\'s real sqlite file');
 
-  // Creation (fresh checkout) or modification of the real files is likewise a
-  // hard failure. Read-only opens of an already-initialized DB are invisible
-  // here — that is why the log-line probe above is load-bearing.
+  // Snapshot of the real files (see snapshotVerdict for the blame rules):
+  // creation by the probe is always fatal; a bare size/mtime change counts
+  // against the tests only when a probe child was caught connecting —
+  // otherwise the live platform may simply have raced this run, and the
+  // mismatch is reported as a diagnostic instead of a false red.
+  // Read-only opens of an already-initialized DB are invisible to the
+  // snapshot anyway — that is why the log-line probe above is load-bearing.
   const after = { db: snapshot(REAL_DB), sessions: snapshot(REAL_SESSIONS_DB) };
-  assert.equal(after.db, before.db,
-    `running the suspect tests changed ${path.relative(REPO_ROOT, REAL_DB)} ` +
-    `(before: ${before.db}, after: ${after.db}) — tests must never touch the real database`);
-  assert.equal(after.sessions, before.sessions,
-    `running the suspect tests changed ${path.relative(REPO_ROOT, REAL_SESSIONS_DB)} ` +
-    `(before: ${before.sessions}, after: ${after.sessions})`);
+  const verdicts = [
+    snapshotVerdict({
+      before: before.db, after: after.db, openersFound: openers.length > 0,
+      label: path.relative(REPO_ROOT, REAL_DB)
+    }),
+    snapshotVerdict({
+      before: before.sessions, after: after.sessions, openersFound: openers.length > 0,
+      label: path.relative(REPO_ROOT, REAL_SESSIONS_DB)
+    })
+  ].filter(Boolean);
+  for (const v of verdicts) {
+    if (v.fail) assert.fail(v.message);
+    t.diagnostic(v.message);
+  }
 });
 
 // ---------------------------------------------------------------------------
 // Test 2 — static: every *.test.js whose require graph loads src/db at module
 // load must pull in helpers/setup first (it sets DB_PATH to a temp dir before
-// anything opens a connection).
+// anything opens a connection); and every *.test.js that merely reaches a
+// LAZY db module must be isolated some provable way (setup / dynamic probe /
+// whitelist-with-reason), because lazy edges fire at runtime, after any
+// source-order check would have passed.
 // ---------------------------------------------------------------------------
 test('a unit test file that loads a service pulls in the temp-db helper first', () => {
   const testFiles = listTestFiles(path.join(SRC_DIR, 'test'));
@@ -346,6 +453,13 @@ test('a unit test file that loads a service pulls in the temp-db helper first', 
       const dep = resolveLocal(file, r.spec);
       return dep && dep !== SETUP_HELPER && loadsDb(dep);
     });
+    // Detector 2b: requires reaching a module that opens src/db lazily, i.e.
+    // the RUNTIME leak class the depth-0 scan cannot see and NODE_ENV=test
+    // logging can no longer be grepped for.
+    const lazyReaching = reqs.filter((r) => {
+      const dep = resolveLocal(file, r.spec);
+      return dep && dep !== SETUP_HELPER && reachesLazyDb(dep);
+    });
 
     if (Object.prototype.hasOwnProperty.call(DELIBERATE_NO_HELPER, base)) {
       seenWhitelist.add(base);
@@ -356,6 +470,11 @@ test('a unit test file that loads a service pulls in the temp-db helper first', 
       if (dbReaching.length > 0) {
         problems.push(`${base} is whitelisted ("${DELIBERATE_NO_HELPER[base]}") but now ` +
           `reaches src/db through: ${dbReaching.map((r) => r.spec).join(', ')} — the whitelist entry is stale`);
+      }
+      if (!DYNAMIC_SUSPECTS.includes(base)) {
+        problems.push(`${base} holds a whitelist exemption from helpers/setup but is no ` +
+          `longer in DYNAMIC_SUSPECTS — without the dynamic probe running it, nothing ` +
+          `verifies the lazy-db design still holds at runtime`);
       }
       continue;
     }
@@ -368,10 +487,83 @@ test('a unit test file that loads a service pulls in the temp-db helper first', 
       problems.push(`${base} requires a src/db-loading module before ../helpers/setup; ` +
         `DB_PATH must point at a temp dir BEFORE anything requires the db chain`);
     }
+    if (lazyReaching.length > 0 && setupReqs.length === 0 && !DYNAMIC_SUSPECTS.includes(base)) {
+      const reached = new Set();
+      for (const r of lazyReaching) {
+        const dep = resolveLocal(file, r.spec);
+        if (LAZY_DB_MODULES.has(dep)) reached.add(path.relative(SRC_DIR, dep));
+        for (const m of loadClosure(dep)) {
+          if (LAZY_DB_MODULES.has(m)) reached.add(path.relative(SRC_DIR, m));
+        }
+      }
+      problems.push(`${base} reaches lazy-db module(s) [${[...reached].join(', ')}] via ` +
+        `${[...new Set(lazyReaching.map((r) => r.spec))].join(', ')} without ../helpers/setup ` +
+        `and without dynamic-probe coverage: a runtime call could open the real database ` +
+        `silently under NODE_ENV=test. Require helpers/setup, add this file to ` +
+        `DYNAMIC_SUSPECTS in this test, or whitelist it with a reason`);
+    }
   }
 
   for (const name of Object.keys(DELIBERATE_NO_HELPER)) {
     assert.ok(seenWhitelist.has(name), `whitelist entry ${name} matches no test file — stale whitelist`);
   }
   assert.deepEqual(problems, [], 'test files must isolate the database they open (see helpers/setup)');
+});
+
+// ---------------------------------------------------------------------------
+// Test 3 — the blame rules themselves. Test 2 above can only prove tests are
+// isolated if the snapshot check stays trustworthy when the LIVE PLATFORM
+// races a run; that platform is not a test. These cases are the fence's own
+// fence: a pure function, so no real file needs to be touched to exercise the
+// "external writer changed the file" path.
+// ---------------------------------------------------------------------------
+test('snapshot verdict: only test-caused changes are failures (live platform may race)', () => {
+  // (b1) self-check demanded by review: a present file changed WHILE NO probe
+  // child connected must NOT red — the live PM2 metrics sampler writes the
+  // metrics table every 10s; blaming the suite for that would turn the
+  // isolation fence into the very noise source it removed.
+  const changedByOutsider = snapshotVerdict({
+    before: 'present:98304:1764000000000',
+    after: 'present:102400:1764000010000',
+    openersFound: false,
+    label: 'data/microverse.sqlite'
+  });
+  assert.ok(changedByOutsider, 'a change must still surface');
+  assert.equal(changedByOutsider.fail, false, 'an outside modification must not be blamed on the tests');
+  assert.match(changedByOutsider.message, /information only/);
+
+  // (b2) the same modification WITH a caught opener is corroborated evidence — fail.
+  assert.equal(snapshotVerdict({
+    before: 'present:98304:1764000000000',
+    after: 'present:102400:1764000010000',
+    openersFound: true,
+    label: 'data/microverse.sqlite'
+  }).fail, true);
+
+  // (b3) creation is ALWAYS a failure even with no opener: a live platform
+  // updates an existing DB but never materializes the file from nothing —
+  // only a stray test process hitting src/db/index.js:6's fallback creates it
+  // (the exact fresh-checkout disaster Task 7 caught), and an opener can be
+  // missed if the child crashed before flushing.
+  const created = snapshotVerdict({
+    before: 'absent',
+    after: 'present:4096:1764000005000',
+    openersFound: false,
+    label: 'data/microverse.sqlite'
+  });
+  assert.equal(created.fail, true);
+  assert.match(created.message, /a test process created the developer's real database file/);
+
+  // Unchanged / still-absent files report nothing.
+  assert.equal(snapshotVerdict({ before: 'absent', after: 'absent', openersFound: false, label: 'x' }), null);
+  assert.equal(snapshotVerdict({
+    before: 'present:98304:1764000000000', after: 'present:98304:1764000000000',
+    openersFound: true, label: 'x'
+  }), null);
+
+  // A file that VANISHED is not a creation and not test damage (tests never
+  // delete it): report, don't blame.
+  assert.equal(snapshotVerdict({
+    before: 'present:98304:1764000000000', after: 'absent', openersFound: false, label: 'x'
+  }).fail, false);
 });
