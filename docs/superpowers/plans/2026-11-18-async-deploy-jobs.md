@@ -626,7 +626,7 @@ test('getDeployJobsByAppIds returns one row per app and [] for an empty id list'
 
 - [ ] **Step 3: 实现** —— 附带形状与 `git` 摘要完全对称（`app-manager.js:133` 的 `Promise.all` + Map by id；`toGitSummary` 旁边放一个 `toDeploySummary`），camelCase 输出、`live` 用 `DeployJobs.isLive` 计算。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（13 tests = Step 0 的 3 + Step 0b 的 1 + Step 0c 的 3 + Step 1 的 7）；全量绿，且 Task 6 的 8 条异步测试必须原样绿
+- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: PASS（**以各 Step 的测试名清单为准，不写总数** —— 我在这份计划里已经三次算错预期条数：Task 2 写 12 实为 17、Task 3 写 4 实为 6、Task 8 写 13 实为 15，数字只会诱导实现者凑数或删测试）；全量绿，且 Task 6 的 8 条、Task 7 的 14 条必须原样绿
 
 - [ ] **Step 5: 提交**
 
