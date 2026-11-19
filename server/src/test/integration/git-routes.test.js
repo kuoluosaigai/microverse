@@ -1,13 +1,34 @@
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { adminAgent, request, queries } = require('../helpers/setup');
 const AppManager = require('../../services/app-manager');
 const GitLifecycle = require('../../services/git-lifecycle');
+const DeployJobs = require('../../services/deploy-jobs');
 const config = require('../../config');
 
 const HEX_SECRET = /^[0-9a-f]{64}$/;
+
+// The two rewritten pull tests answer 202 through a real claimed job, so
+// claim()'s log files need a tmp dir (never the repo's real data/) and the
+// self-update gate must stay deterministic — same seams as
+// deploy-async-start/deploy-async-pull.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'microverse-git-routes-'));
+after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+async function waitForDeployJob(appId, { timeoutMs = 3000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const job = await queries.getDeployJob(appId);
+    if (job && (job.status === 'succeeded' || job.status === 'failed')) return job;
+    if (Date.now() > deadline) {
+      throw new Error(`deploy job for app ${appId} did not converge within ${timeoutMs}ms (last: ${JSON.stringify(job)})`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 async function bind(appId, overrides = {}) {
   await queries.upsertAppGitSource({
@@ -170,33 +191,56 @@ test('DELETE returns 409 and keeps the binding during a live sync', async () => 
   assert.ok(await queries.getAppGitSource(app.id));
 });
 
-test('pull returns the deployed commit on success', async (t) => {
+// CONTRACT CHANGE (Task 9, spec decision 7): pull is a background deploy job
+// now. The two tests below asserted the old synchronous contract (200 +
+// data.status / 400 on failure) and are rewritten, renamed to say so.
+
+test('POST /git/pull answers 202 and the git summary then reads success (contract change: was 200 + data.status)', async (t) => {
   const app = await AppManager.createApp('routes-git-pull-ok', 'npm');
   await bind(app.id);
   const agent = await adminAgent();
-  t.mock.method(GitLifecycle, 'pull', async () => ({
-    status: 'success', deployedCommit: 'abc123', error: null
-  }));
+  t.mock.method(DeployJobs, 'logDir', () => tmp);
+  t.mock.method(DeployJobs, 'isUpdateRunning', () => false);
+  t.mock.method(GitLifecycle, 'pull', async () => {
+    // A real sync writes its own outcome into app_git_source; the job row
+    // never becomes the truth of what was deployed — it only reports
+    // progress. The fake mirrors that split.
+    await queries.finishGitSync(app.id, { status: 'success', deployedCommit: 'abc123' });
+    return { status: 'success', deployedCommit: 'abc123', error: null };
+  });
 
-  const res = await agent.post(`/api/apps/${app.id}/git/pull`).expect(200);
+  const res = await agent.post(`/api/apps/${app.id}/git/pull`).expect(202);
 
   assert.equal(res.body.success, true);
-  assert.equal(res.body.data.deployedCommit, 'abc123');
-  assert.equal(res.body.data.status, 'success');
+  assert.deepEqual(res.body.data, { app_id: app.id, kind: 'pull', status: 'running' });
+
+  const job = await waitForDeployJob(app.id);
+  assert.equal(job.status, 'succeeded');
+  assert.equal(job.kind, 'pull');
+
+  const get = await agent.get(`/api/apps/${app.id}`).expect(200);
+  assert.equal(get.body.data.git.last_status, 'success');
+  assert.equal(get.body.data.git.deployed_commit, 'abc123');
 });
 
-test('pull maps a failed sync to 400 with the error', async (t) => {
+test('POST /git/pull answers 202 and converges the job to failed when the sync fails (contract change: was 400)', async (t) => {
   const app = await AppManager.createApp('routes-git-pull-fail', 'npm');
   await bind(app.id);
   const agent = await adminAgent();
+  t.mock.method(DeployJobs, 'logDir', () => tmp);
+  t.mock.method(DeployJobs, 'isUpdateRunning', () => false);
   t.mock.method(GitLifecycle, 'pull', async () => ({
     status: 'failed', deployedCommit: null, error: 'npm run build failed'
   }));
 
-  const res = await agent.post(`/api/apps/${app.id}/git/pull`).expect(400);
+  const res = await agent.post(`/api/apps/${app.id}/git/pull`).expect(202);
+  assert.equal(res.body.data.kind, 'pull');
 
-  assert.equal(res.body.success, false);
-  assert.match(res.body.error.message, /build failed/);
+  // The failure is no longer a synchronous 400 — the request already
+  // answered; the job row carries the original error message.
+  const job = await waitForDeployJob(app.id);
+  assert.equal(job.status, 'failed');
+  assert.match(job.message, /build failed/);
 });
 
 test('check returns the lifecycle comparison and maps git errors to 400', async (t) => {

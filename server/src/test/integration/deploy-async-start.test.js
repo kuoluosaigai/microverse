@@ -220,6 +220,74 @@ test('the job converges to failed with the npm message when deployApp rejects', 
   // table only), so it could not fail — a tautological assertion.
 });
 
+// Step 0 (Task 9): the two bookkeeping legs Task 6's review found unguarded.
+// They pin DeployRunner's last lines of defence — deleting either guard in
+// deploy-runner.js must redden exactly one of these two tests.
+
+test('a rejecting finish does not produce an unhandled rejection', async () => {
+  // The runner's FINAL .catch is the only net left when the finish/prune
+  // BOOKKEEPING itself rejects (DB fault): the background failure
+  // convergence this whole feature rests on has to survive even its own
+  // bookkeeping exploding. Delete that .catch and this test is what reddens.
+  // The row is DELIBERATELY left non-terminal — reconcileOnBoot's liveness
+  // sweep owns that recovery; nothing here may throw at the process.
+  const app = await makeApp('async-start-finish-rejects');
+  stubClaimEnvironment();
+  mock.method(DeployManager, 'deployApp', async () => AppManager.getAppById(app.id));
+  const finish = mock.method(DeployJobs, 'finish', async () => {
+    throw new Error('database is locked');
+  });
+
+  const seen = [];
+  const handler = (reason) => seen.push(reason);
+  process.on('unhandledRejection', handler);
+  try {
+    const agent = await adminAgent();
+    await agent.post(`/api/apps/${app.id}/start`).expect(202);
+
+    // Wait for the runner to have REACHED finish(), then extra ticks for any
+    // stray floating rejection to surface (same allowance as below).
+    const deadline = Date.now() + 2000;
+    while (finish.mock.callCount() === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(finish.mock.callCount() >= 1, 'the runner must have reached finish()');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    process.off('unhandledRejection', handler);
+  }
+
+  assert.deepEqual(seen, []);
+  const job = await queries.getDeployJob(app.id);
+  assert.equal(job.status, 'running', 'a failed finish leaves the row for boot convergence');
+});
+
+test('a thrown object with a hostile toString still converges to failed', async () => {
+  // messageFrom() falls back to String(error) for throwables without a
+  // message — and String() can itself THROW (an object whose toString
+  // throws). Without a try/catch + fixed fallback inside messageFrom, the
+  // rejection path dies before calling finish(), wedging the row 'running'
+  // until the stale window. Remove that fallback and THIS test reddens (the
+  // job never converges).
+  const app = await makeApp('async-start-hostile-throw');
+  stubClaimEnvironment();
+  const hostile = {};
+  Object.defineProperty(hostile, 'toString', {
+    value: () => { throw new Error('hostile toString'); }
+  });
+  mock.method(DeployManager, 'deployApp', async () => { throw hostile; });
+
+  const agent = await adminAgent();
+  await agent.post(`/api/apps/${app.id}/start`).expect(202);
+
+  const job = await waitForJob(app.id);
+  assert.equal(job.status, 'failed');
+  // The fallback literal is asserted exactly: it is what an operator sees in
+  // the job row when the thrown value is unprintable.
+  assert.equal(job.message, 'deploy job failed with an unprintable error');
+});
+
 test('deployApp rejection never produces an unhandled rejection', async () => {
   const app = await makeApp('async-start-unhandled');
   stubClaimEnvironment();

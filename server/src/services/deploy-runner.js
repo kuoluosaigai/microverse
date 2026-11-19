@@ -23,7 +23,17 @@ function messageFrom(error) {
   if (error && typeof error.message === 'string' && error.message.length > 0) {
     return error.message;
   }
-  return String(error);
+  try {
+    return String(error);
+  } catch (_err) {
+    // String() can itself throw — an object whose toString throws. This
+    // runs INSIDE the rejection path that calls finish({ok:false}): letting
+    // it throw would skip finish entirely and wedge the row 'running' until
+    // the stale window. A fixed literal always reaches finish instead; the
+    // runner's convergence promise outranks a faithful message (pinned by
+    // 'a thrown object with a hostile toString still converges to failed').
+    return 'deploy job failed with an unprintable error';
+  }
 }
 
 class DeployRunner {
@@ -78,6 +88,8 @@ class DeployRunner {
         // finish/prune writes themselves reject (DB fault). It cannot fix the
         // row — reconcileOnBoot owns that recovery — and it must not throw,
         // so every path through startBackground converges or degrades quietly.
+        // Pinned by 'a rejecting finish does not produce an unhandled
+        // rejection': removing this net reddens exactly that test.
       });
   }
 }

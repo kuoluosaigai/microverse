@@ -371,12 +371,23 @@ class GitLifecycle {
    * leaves deployed_commit NULL when nothing was ever deployed). A restart
    * failure is different — the new files are already valid, so it keeps the new
    * commit and only reports failed (no rollback).
+   * `logFile`/`onStep` are the optional deploy-job context (Task 9, same
+   * threading decision 8 established for start): forwarded to BOTH
+   * NpmLifecycle.ensureBuilt call sites — the forward build and the
+   * rollback repair — so a background pull's npm transcript lands in the
+   * job log file and its steps in the job row. When absent (webhook and
+   * every pre-Task-9 caller) the ensureBuilt calls keep their exact old
+   * argument shapes; the service-level sync tests pin that. The claim /
+   * busy / rollback semantics themselves are untouched.
    * @param {object} app app row (needs id, name, path, deploy_type)
-   * @param {{ reason?: string }} [options]
+   * @param {{ reason?: string, logFile?: string|null, onStep?: ((step: string) => void)|null }} [options]
    * @returns {Promise<{ status: 'busy'|'up-to-date'|'success'|'failed', deployedCommit: string|null, error: string|null }>}
    */
-  static async sync(app, { reason = 'manual' } = {}) {
+  static async sync(app, { reason = 'manual', logFile = null, onStep = null } = {}) {
     void reason; // reserved for callers/logging; outcome is recorded in the DB row
+    // null (NOT {}): with no job context the ensureBuilt call sites below
+    // must receive exactly the arguments they received before Task 9.
+    const ctx = logFile || onStep ? { logFile, onStep } : null;
     const source = await db().queries.getAppGitSource(app.id);
     if (!source) {
       return { status: 'failed', deployedCommit: null, error: 'Not a Git-sourced app' };
@@ -388,7 +399,7 @@ class GitLifecycle {
     const maxAttempts = 3;
     let result = null;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      result = await this.syncAttempt(app);
+      result = await this.syncAttempt(app, ctx);
       // 'up-to-date' is a successful attempt too: this attempt proved the
       // deployed SHA, but a webhook may have recorded a newer remote_commit
       // meanwhile. Keep coalescing in that window instead of leaving the app
@@ -407,14 +418,15 @@ class GitLifecycle {
    * with finishGitSync (which clears sync_started_at) — including unexpected
    * throws — so a failure can never wedge the app behind a permanent claim.
    * @param {object} app
+   * @param {{ logFile: string|null, onStep: ((step: string) => void)|null }|null} [ctx] deploy-job context (see sync)
    */
-  static async syncAttempt(app) {
+  static async syncAttempt(app, ctx = null) {
     if (!(await db().queries.claimGitSync(app.id, config.git.staleSyncMs))) {
       return { status: 'busy', deployedCommit: null, error: null };
     }
 
     try {
-      return await this.runClaimedSync(app);
+      return await this.runClaimedSync(app, ctx);
     } catch (err) {
       // Unexpected error outside the explicit rollback paths (DB/PM2/git
       // plumbing). Release the claim and report it; there is no known-good
@@ -428,8 +440,9 @@ class GitLifecycle {
   /**
    * Body of a claimed sync. Callers must hold the claim.
    * @param {object} app
+   * @param {{ logFile: string|null, onStep: ((step: string) => void)|null }|null} [ctx] deploy-job context (see sync)
    */
-  static async runClaimedSync(app) {
+  static async runClaimedSync(app, ctx = null) {
     const source = await db().queries.getAppGitSource(app.id);
     if (!source) {
       await db().queries.finishGitSync(app.id, { status: 'failed', error: 'Not a Git-sourced app' });
@@ -470,7 +483,10 @@ class GitLifecycle {
       await this.gitExec(this.cleanArgs(app), { cwd: app.path });
 
       if (app.deploy_type === 'npm') {
-        await npmLifecycle().ensureBuilt(app.id, app.path);
+        // `ctx || undefined` — not `ctx`: without job context the recorded
+        // call must stay exactly 2-arg (git-lifecycle-sync asserts the third
+        // argument is undefined).
+        await npmLifecycle().ensureBuilt(app.id, app.path, ctx || undefined);
       }
     } catch (err) {
       const message = err && err.message ? err.message : String(err);
@@ -487,8 +503,14 @@ class GitLifecycle {
         try {
           // Force: the restored package.json/lockfile match the stored install
           // fingerprint, so the fingerprint gates would skip the very install
-          // and build that the rollback needs to repair the deployment.
-          await npmLifecycle().ensureBuilt(app.id, app.path, { force: true });
+          // and build that the rollback needs to repair the deployment. The
+          // rollback repair is part of the same job: its output goes to the
+          // same log file (Task 9 threading — pinned by
+          // 'rollback path still runs and its output lands in the same log').
+          const rollbackOptions = ctx
+            ? { force: true, logFile: ctx.logFile, onStep: ctx.onStep }
+            : { force: true };
+          await npmLifecycle().ensureBuilt(app.id, app.path, rollbackOptions);
         } catch (_rebuildErr) {
           // Best-effort only: never mask the original error.
         }
@@ -567,12 +589,15 @@ class GitLifecycle {
   }
 
   /**
-   * Alias used by route/background callers: pull === sync.
+   * Alias used by route/background callers: pull === sync. Passes the
+   * options through untouched (the pull route's job context arrives at
+   * sync via here).
    * @param {object} app
+   * @param {{ reason?: string, logFile?: string|null, onStep?: ((step: string) => void)|null }} [options]
    * @returns {Promise<ReturnType<typeof GitLifecycle.sync>>}
    */
-  static async pull(app) {
-    return this.sync(app);
+  static async pull(app, options) {
+    return this.sync(app, options);
   }
 }
 

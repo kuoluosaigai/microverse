@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const AppManager = require('../services/app-manager');
 const GitLifecycle = require('../services/git-lifecycle');
 const DeployJobs = require('../services/deploy-jobs');
+const DeployRunner = require('../services/deploy-runner');
 const { sendDeployConflict } = require('./deploy-conflict');
 const { queries } = require('../db');
 const {
@@ -215,30 +216,82 @@ router.post('/apps/:id/git/check', async (req, res, next) => {
   }
 });
 
-// Pull the branch and rebuild/restart. Synchronous by design; the DB claim is
-// the single-flight guard, so a concurrent pull reports busy rather than
-// racing the working tree.
+// Pull the branch and rebuild/restart — 202 + background deploy job, the
+// same shape POST /apps/:id/start settled on (Task 6 -> Task 9): the fetch /
+// reset / npm install / npm run build chain takes minutes and must not block
+// the request. Everything answerable WITHOUT doing the work keeps its old
+// synchronous status (404s, both 409 locks); everything else is decided by
+// the job row. Order is load-bearing, mirroring start: fast-path job gate ->
+// git-claim gate -> atomic claim.
+//
+// The git-claim gate has two halves because the job and the git claim are
+// DIFFERENT locks. A webhook sync holding `claimGitSync` is answered 409
+// synchronously here (symmetric with start's identical guard) so the common
+// case never 202s into a doomed job; if the webhook wins the claim in the
+// window after the job is already claimed, sync() reports 'busy' and the
+// workFn below converges the job to failed — the 202 cannot be revoked.
 router.post('/apps/:id/git/pull', async (req, res, next) => {
   try {
-    const app = await AppManager.getAppById(req.params.id);
+    const app = await AppManager.getAppById(req.params.id); // 404 'App not found'
     const source = await queries.getAppGitSource(app.id);
     if (!source) return sendError(res, 404, NO_SOURCE_MESSAGE);
 
-    const result = await GitLifecycle.pull(app);
-    if (result.status === 'busy') {
-      return sendError(res, 409, result.error || BUSY_MESSAGE);
-    }
-    if (result.status === 'failed') {
-      return sendError(res, 400, result.error || 'Git pull failed');
+    // A live deploy job (start, or an earlier pull) owns this app's single
+    // deploy lock; a second pull would double-launch the same minutes of
+    // work. claim() below re-checks atomically — this one fails fast.
+    await DeployJobs.assertIdle(app.id, '拉取更新'); // throws err.status = 409
+
+    if (await GitLifecycle.isSyncInProgress(app.id)) {
+      return sendError(res, 409, 'Update in progress');
     }
 
-    res.json({
+    const claim = await DeployJobs.claim(app, DeployJobs.KINDS.PULL);
+    if (!claim.ok) {
+      // Reasons map exactly as in the start route: 'gone' -> 404 (NO 202),
+      // 'updating' -> 409 (platform self-update lock), 'busy' -> 409
+      // rendered through the ONE busy-message producer.
+      if (claim.reason === 'gone') return sendError(res, 404, 'App not found');
+      if (claim.reason === 'updating') {
+        return sendError(res, 409, '平台正在自更新，请稍后再试');
+      }
+      const busyJob = await queries.getDeployJob(app.id);
+      if (!busyJob) return sendError(res, 404, 'App not found');
+      return sendError(res, 409, DeployJobs.busyMessage(busyJob, '拉取更新'));
+    }
+
+    res.status(202).json({
       success: true,
-      data: { deployedCommit: result.deployedCommit, status: result.status }
+      data: { app_id: app.id, kind: DeployJobs.KINDS.PULL, status: 'running' }
+    });
+
+    // Sent — from here the job row is the only reporter. sync()/pull keep
+    // their existing return shape (routes, webhooks and 14 service tests
+    // depend on it); the runner owns every failure path, and the statuses
+    // sync() only REPORTS instead of throwing are converted here, because
+    // 'busy'/'failed' must converge the row instead of succeeding quietly.
+    DeployRunner.startBackground(app, DeployJobs.KINDS.PULL, claim.job, async (ctx) => {
+      const result = await GitLifecycle.pull(app, {
+        reason: 'manual',
+        logFile: ctx.logFile,
+        onStep: ctx.report
+      });
+      if (result.status === 'busy') {
+        throw new Error(BUSY_MESSAGE);
+      }
+      if (result.status === 'failed') {
+        throw new Error(result.error || 'Git pull failed');
+      }
+      // 'success' and 'up-to-date' are both a converged deploy.
+      return result;
     });
   } catch (error) {
     if (error.message === 'App not found') return sendError(res, 404, error.message);
     if (error.message === 'Update in progress') return sendError(res, 409, error.message);
+    // assertIdle stamps err.status = 409; the response is produced by the
+    // one shared mapper (routes/deploy-conflict), not here.
+    if (sendDeployConflict(res, error)) return;
+    // Kept for the pre-check paths that still run in-request; the git/npm
+    // failures of the pull itself now surface through the job row instead.
     if (isClientGitError(error)) return sendError(res, 400, error.message);
     next(error);
   }
