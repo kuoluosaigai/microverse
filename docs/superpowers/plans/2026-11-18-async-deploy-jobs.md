@@ -517,6 +517,22 @@ git add server/src/test/
 git commit -m "test: keep every test file off the developer's real sqlite file"
 ```
 
+- [ ] **Step 7（控制者追加，单独 commit）：把 DB 启动噪声从测试进程关掉。**
+  `db/index.js:21` 只给 "Database connected" 做了 `development` 门控，而 :83-84 的
+  "Database initialized successfully" / "Database path: …" 与 :98 的 migration 提示**无条件打印**，
+  于是每个加载 db 的测试子进程都往 stdout 写 2+ 行。仓库其实早已认定这会干扰测试运行器 ——
+  `git-lifecycle.js:8-15` 的注释原话是"logs progress to stdout, which would corrupt the node test
+  runner's IPC stream"，只是只在 require 侧规避、没在打印侧根治。
+  要求：`NODE_ENV === 'test'` 时不打印这些启动提示（**不要**关掉开发/生产启动时用户期待的信息）；
+  同时保证 Step 2 的隔离探针仍然有效 —— 它依赖 `Database path:` 这行，
+  所以探针改为在**自己的子进程**里显式设 `NODE_ENV=development`，不依赖测试环境默认值。
+  改完重做一次自证（摘掉 helper 那行 → 探针仍点名该文件变红）。
+
+```bash
+git add server/src/db/index.js server/src/test/unit/test-db-isolation.test.js
+git commit -m "test: stop db boot logging from polluting the test runner's stdout"
+```
+
 ---
 
 ### Task 8: `deploy` 摘要附带 + `GET /api/apps/:id/deploy`
