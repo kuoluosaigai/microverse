@@ -17,7 +17,7 @@ const { validateEnvEntries } = require('../utils/validate-env');
 const { flattenTopDirs } = require('../utils/flatten-zip-root');
 const zipDecoder = require('../utils/zip-decoder');
 const { staleFilesToRemove, platformManagedNames } = require('../utils/stale-files');
-const { sendDeployConflict } = require('./deploy-conflict');
+const { sendDeployConflict, sendClaimFailure } = require('./deploy-conflict');
 const config = require('../config');
 const { queries } = require('../db');
 
@@ -279,39 +279,15 @@ router.post('/apps/:id/start', async (req, res, next) => {
       });
     }
 
-    // Atomic cross-worker claim. Reasons map per Task 2's contract:
-    // 'gone' -> 404 (NO 202, no background task), 'updating' -> 409
-    // (platform self-update lock), 'busy' -> 409 (lost the fast-path race).
+    // Atomic cross-worker claim. Reasons map per Task 2's contract
+    // ('gone' -> 404, 'updating' -> 409, 'busy' -> 409 via busyMessage) in
+    // the ONE shared producer, routes/deploy-conflict#sendClaimFailure —
+    // byte-identical to the per-branch responses this route hand-rolled
+    // before Task 10 Step 0 extracted them (the pull route shares it).
     const claim = await DeployJobs.claim(app, DeployJobs.KINDS.START);
     if (!claim.ok) {
-      if (claim.reason === 'gone') {
-        return res.status(404).json({
-          success: false,
-          error: { message: 'App not found' }
-        });
-      }
-      if (claim.reason === 'updating') {
-        return res.status(409).json({
-          success: false,
-          error: { message: '平台正在自更新，请稍后再试' }
-        });
-      }
-      // 'busy': another worker's live job won the atomic claim. Read the row
-      // that beat us and render it through the ONE busy-message producer
-      // (DeployJobs.busyMessage) — Task 6 had this branch hand-copying
-      // assertIdle's format and dropping the `· <step>` part. A row gone at
-      // this instant means the app was deleted mid-race: same 404 as 'gone'.
-      const busyJob = await queries.getDeployJob(app.id);
-      if (!busyJob) {
-        return res.status(404).json({
-          success: false,
-          error: { message: 'App not found' }
-        });
-      }
-      return res.status(409).json({
-        success: false,
-        error: { message: DeployJobs.busyMessage(busyJob, '启动') }
-      });
+      await sendClaimFailure(res, claim, app, '启动');
+      return;
     }
 
     res.status(202).json({

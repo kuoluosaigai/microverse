@@ -4,7 +4,7 @@ const AppManager = require('../services/app-manager');
 const GitLifecycle = require('../services/git-lifecycle');
 const DeployJobs = require('../services/deploy-jobs');
 const DeployRunner = require('../services/deploy-runner');
-const { sendDeployConflict } = require('./deploy-conflict');
+const { sendDeployConflict, sendClaimFailure } = require('./deploy-conflict');
 const { queries } = require('../db');
 const {
   validateGitUrl,
@@ -247,16 +247,11 @@ router.post('/apps/:id/git/pull', async (req, res, next) => {
 
     const claim = await DeployJobs.claim(app, DeployJobs.KINDS.PULL);
     if (!claim.ok) {
-      // Reasons map exactly as in the start route: 'gone' -> 404 (NO 202),
-      // 'updating' -> 409 (platform self-update lock), 'busy' -> 409
-      // rendered through the ONE busy-message producer.
-      if (claim.reason === 'gone') return sendError(res, 404, 'App not found');
-      if (claim.reason === 'updating') {
-        return sendError(res, 409, '平台正在自更新，请稍后再试');
-      }
-      const busyJob = await queries.getDeployJob(app.id);
-      if (!busyJob) return sendError(res, 404, 'App not found');
-      return sendError(res, 409, DeployJobs.busyMessage(busyJob, '拉取更新'));
+      // Reasons map exactly as in the start route — one shared producer,
+      // routes/deploy-conflict#sendClaimFailure (Task 10 Step 0 extracted
+      // the two verbatim copies; only the action verb differs).
+      await sendClaimFailure(res, claim, app, '拉取更新');
+      return;
     }
 
     res.status(202).json({
