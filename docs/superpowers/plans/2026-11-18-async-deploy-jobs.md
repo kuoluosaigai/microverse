@@ -640,10 +640,12 @@ git commit -m "feat(api): expose deploy job state and log tail to the client"
 ### Task 9: `POST /apps/:id/git/pull` 改 202（`kind='pull'`）
 
 **Files:**
-- Modify: `server/src/routes/git.js:199-225`
+- Modify: `server/src/routes/git.js`（pull handler）
+- Modify: `server/src/services/deploy-runner.js`（Step 0 的两条兜底：bookkeeping 失败的 `.catch`、`messageFrom` 的 try/catch）
 - Modify: `server/src/services/git-lifecycle.js`（`sync`/`runClaimedSync`/`syncAttempt` 接受 `ctx`；`ensureBuilt` 调用点透传 `logFile`/`onStep`）
+- Modify: `server/src/test/integration/deploy-async-start.test.js`（Step 0 的 runner 测试落在这个文件，runner 是共用的）
 - Test: `server/src/test/integration/deploy-async-pull.test.js`（新建）
-- Modify: `server/src/test/integration/git-routes.test.js:181,188`
+- Modify: `server/src/test/integration/git-routes.test.js`（两条契约测试：200→202、400→202+failed）
 
 **Interfaces:**
 - Consumes: Task 2/4/5 与 Task 6 的 `DeployRunner.startBackground`
