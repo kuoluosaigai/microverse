@@ -498,6 +498,16 @@ test('a late advance cannot overwrite a terminal row', ...)
 实现要求：`updateDeployJobStep` 的 WHERE 追加 `AND status = 'running'`（终态守卫，与已有的 pid fence 并列）；
 `finish(appId,{ok:true})` 同时写 `step='done'`；`finish(appId,{ok:false,...})` 保留原 step 不动。
 
+  **一条反方意见与我的答复（不要因此改主意，除非你能证伪我的理由）**：
+  第二位审查者主张 `done` 应由 `DeployRunner` 的成功路径写（`advance(DONE)` 再 `finish`），
+  理由是"`finish()` 是 Task 2 的冻结文件、被 pull 共用，且 `reconcileOnBoot` 故意绕过它"。
+  我判定仍然写在 `finish(ok:true)` 里，因为：
+  ① 被 pull 共用恰恰是**优点** —— start 与 pull 共用一条语句，不会有第二种成功路径忘了写 `done`；
+  ② `reconcileOnBoot` 走的是查询层（Task 3 已定），本来就碰不到 `finish()`，
+     被中断的任务因此不会谎称 `done` —— 这正是我们想要的行为，不是反对理由；
+  ③ 写在 `finish` 里是**同一条 UPDATE** 同时落 `status`/`step`/`finished_at`，
+     不存在"先 finish 再 advance"之间的窗口；而 runner 方案在 `finish` 已经落库后被抢答的风险更高。
+
 - [ ] **Step 0b: 把 busy-409 文案抽成唯一生产者**
 
 Task 6 在 start 路由里手抄了一份 `assertIdle` 的消息格式且**少了 `· <step>`**，
@@ -512,6 +522,22 @@ test('claim reason gone yields 404 and never starts a background deploy', ...)
 test('claim reason updating yields 409 with the self-update wording', ...)
 test('an unknown app id yields 404 without claiming', ...)
 ```
+
+- [ ] **Step 0d: 把 Task 6 的两条计时测试改成机器速度无关**（`deploy-async-start.test.js`）
+
+两位审查者都指出 `elapsed < 200` 对 500ms 假睡眠这种形状**只会假红、不会假绿**，
+但在高负载 CI 上会偶发。更稳的形状是让假 `deployApp` 等一个**由测试掌握的 deferred**：
+
+```js
+// 异步路由：202 立刻到达，与机器速度无关；
+// 若有人改回 await：请求会一直挂到测试超时 ⇒ 确定性红。
+test('POST /start returns 202 without waiting for the deploy to be released', ...)
+```
+同时修审查者点出的两处测试质量问题：
+`deploy-async-start.test.js:128-129` 的注释把机制说成"ENOENT 回落到 DB 状态"，实际是下一行的
+直接 `getProcessStatus → online` stub（按注释描述的机制，DB 会停在 `stopped`，测试根本到不了 400）；
+`:206-207` 的 `row.status === 'stopped'` 是恒真断言（mock 的 deployApp 从未碰应用行，
+`finish` 也不写 app 状态）—— 要么删掉要么换成有意义的断言。
 
 - [ ] **Step 1: 写失败测试**
 
