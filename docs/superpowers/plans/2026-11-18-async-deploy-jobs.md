@@ -745,7 +745,9 @@ git commit -m "feat(update): refuse updates while an app deploy is in flight"
 
 **Interfaces:**
 - Consumes: Task 8 的 `app.deploy` 与 `GET /api/apps/:id/deploy`
-- Produces: i18n key `appCard.deploy.<step>`、`appCard.deployFailed`、`appCard.deployLog`、`appCard.deployBusy`、`messages.deployStarted`
+- Produces（**落地后的真实键名**，先前本节与此处措辞冲突过，实现者按后文显式清单执行是对的）：
+  `appCard.deploy.{live,progress,busy,log,drawerTitle,logEmpty}` 与 `appCard.deploy.step.{queued,git,validate,install,build,nginx,launch,proxy,done}`，
+  以及 `messages.deployStarted`、`messages.deployStartedNote` 等新增消息键。**zh/en 两边必须同键同结构。**
 
 - [ ] **Step 1: 实现 api 层** —— `startApp`/`pullAppGit` 不再 `timeout: 0`（202 秒回），新增 `getDeployStatus(id)`。
 
