@@ -8,6 +8,14 @@ const ProcessManager = require('./process-manager');
 
 const execFilePromise = promisify(execFile);
 
+// Lazy require — deploy-jobs.js reaches back into THIS module the same way
+// (its `updateManager()` accessor). An eager top-level require here would
+// load src/db (deploy-jobs requires it at module load) into every process
+// that merely requires update-manager, silently opening the real database
+// in the db-free unit files (update-manager.test.js, update-state.test.js).
+// Both directions stay function-scoped so the cycle never exists at load.
+function deployJobs() { return require('./deploy-jobs'); }
+
 // Version-check cache window: one `git ls-remote` per 10 minutes is plenty.
 const CHECK_TTL_MS = 10 * 60 * 1000;
 
@@ -408,6 +416,24 @@ class UpdateManager {
     }
     if (this.isUpdateRunning()) {
       return { ok: false, httpStatus: 409, message: '已有更新正在进行' };
+    }
+
+    // Mutual exclusion, forward half (spec decision 9). The check above and
+    // DeployJobs.claim's 'updating' gate are the same lock read from the
+    // update side; this is the deploy side read from the update side: an
+    // update ends in `pm2 reload`, which restarts every worker and would
+    // kill any in-flight deploy mid-install/mid-build, so a live job on ANY
+    // app refuses ANY update. 409 matches the deploy-conflict convention
+    // (busy claim / assertIdle / the isUpdateRunning refusal above).
+    const blocking = await deployJobs().anyActiveJob();
+    if (blocking) {
+      // Names the blocking app and its step — an operator deciding whether
+      // to wait needs that, not a bare "busy". Fixed wording (Task 11).
+      return {
+        ok: false,
+        httpStatus: 409,
+        message: `有应用正在部署（${blocking.app_name} · ${blocking.step}），请等待完成`
+      };
     }
 
     const current = await this.getCurrentVersion();

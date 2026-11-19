@@ -5,9 +5,15 @@ const config = require('../config');
 const pathHelper = require('../utils/path-helper');
 const { DEPLOY_STEPS, DEPLOY_STEP, DEPLOY_KINDS } = require('../utils/deploy-steps');
 
-// Lazy require (git-lifecycle.js pattern): update-manager.js will require THIS
-// module once the self-update flow moves onto deploy jobs (Task 10). A
-// top-level require here would close that cycle at module load.
+// Lazy require (git-lifecycle.js pattern): update-manager.js and THIS module
+// are a dependency cycle by design — claim() consults the update lock,
+// preflight() consults the job table. BOTH directions stay behind function
+// accessors (update-manager.js has the mirror `deployJobs()` accessor since
+// Task 10): any top-level require in either direction would close the cycle
+// at module load, and — because deploy-jobs requires src/db at load — would
+// drag the SQLite connection into every process that merely requires
+// update-manager (the db-isolation fence runs update-state.test.js
+// precisely to prove that chain stays db-free).
 function updateManager() { return require('./update-manager'); }
 
 // Terminal statuses free the single-flight lock; anything else is in-flight.
@@ -302,6 +308,29 @@ class DeployJobs {
   static async activeJob(appId) {
     const job = await queries.getDeployJob(appId);
     return job && this.isLive(job) ? job : null;
+  }
+
+  /**
+   * The first LIVE job across ALL apps, with the owning app's `name` attached
+   * as `app_name`, or null. This is what UpdateManager.preflight() consults
+   * (Task 10 mutual exclusion): a self-update ends in `pm2 reload` of every
+   * worker, so a live job on ANY app kills ANY deploy — per-app activeJob()
+   * cannot answer that. Liveness is exactly isLive()'s verdict (terminal,
+   * dead-owner and stale rows never block) applied to the same non-terminal
+   * scan reconcileOnBoot uses; rows whose app vanished between scan and name
+   * read are skipped (CASCADE removes the job row with it — nothing live is
+   * blocking).
+   * @returns {Promise<object|null>} job row plus app_name, or null
+   */
+  static async anyActiveJob() {
+    const rows = await queries.listNonTerminalDeployJobs();
+    for (const row of rows) {
+      if (!this.isLive(row)) continue;
+      const app = await queries.getAppById(row.app_id);
+      if (!app) continue;
+      return { ...row, app_name: app.name };
+    }
+    return null;
   }
 
   /**

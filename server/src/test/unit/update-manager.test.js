@@ -1,10 +1,18 @@
-const { test, mock } = require('node:test');
+const { test, before, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const EventEmitter = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// setup must load first (no assertions change): preflight()'s deploy-job
+// guard (Task 10) reaches src/db at RUNTIME through deploy-jobs, so without
+// this helper the preflight tests below would fall back to the repo's real
+// data/microverse.sqlite. The temp DB holds no deploy jobs, so the guard
+// passes every existing preflight case through to its original verdict.
+const { dbReady } = require('../helpers/setup');
 const UpdateManager = require('../../services/update-manager');
+
+before(async () => { await dbReady; });
 const ProcessManager = require('../../services/process-manager');
 const config = require('../../config');
 
