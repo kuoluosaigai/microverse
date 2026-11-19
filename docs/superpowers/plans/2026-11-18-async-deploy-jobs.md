@@ -468,6 +468,57 @@ git commit -m "feat(api): refuse app mutations while a deploy job is live"
 
 ---
 
+### Task 7b: 让每个测试文件都落在临时库里（测试卫生，独立小任务）
+
+**Files:**
+- Modify: `server/src/test/unit/proxy-config.test.js`、`nginx-log-paths.test.js`、`port-allocation.test.js`、
+  `process-manager-ecosystem.test.js`、`resolve-cli-module.test.js`、`app-name-validation.test.js`、
+  `update-state.test.js`、`update-manager.test.js`、`self-updater-success.test.js`、`self-updater-rollback.test.js`、
+  `git-lifecycle-repo.test.js`（**先逐个判定是否真的会打开库**，见 Step 1）
+- Test: `server/src/test/unit/test-db-isolation.test.js`（新建）
+
+**Interfaces:**
+- Produces: 无对外接口；只保证一件事 —— 跑测试不会碰仓库的 `data/microverse.sqlite`。
+- Consumes: `server/src/test/helpers/setup.js`（它把 `DB_PATH`/`APPS_DIR` 指到每次运行唯一的临时目录）
+
+背景（Task 7 实现者发现、控制器复核）：仓库里已有正确范式 —— `npm-fingerprints.test.js:6-8` 在 require 任何
+service 之前先 `require('../helpers/setup')`，并写明理由。但另有 11 个测试文件没有这一行，
+其中至少 `proxy-config.test.js` 经 `services/proxy-manager` → `require('../db')` 真的打开了
+`data/microverse.sqlite`（`db/index.js:6` 的回退路径），后果是测试能**创建/初始化开发者真实的库文件**，
+并在并发运行时持有它的锁 —— 这正是 `node --test` 偶发 IPC flake 的来源。
+对本计划剩余任务的实际威胁是：**"全量必须绿"这个回归信号本身在抖**，抖动的信号会掩盖真实回归。
+
+- [ ] **Step 1: 先判定，别一视同仁** —— 逐个确认该文件是否真的会打开数据库再动它。
+      已知反例：`git-lifecycle-repo.test.js` 是**故意**不 require setup 的 ——
+      `git-lifecycle.js:8-15` 用惰性 `function db()` 正是为了"只测 git 原语的进程不开库、不往 stdout 打日志"。
+      给它加 setup 反而违背既有设计。判定方法：跑该文件并断言 `data/microverse.sqlite` 未被创建或修改
+      （用 mtime+size 快照，**不要**删除开发者的库）。
+
+- [ ] **Step 2: 写失败测试** —— `test-db-isolation.test.js`：
+
+```js
+test('the whole suite never creates or modifies the repo data/microverse.sqlite', ...)
+  // 做法：在本文件里先 snapshot（不存在则记 absent），再 fork 一个子进程跑若干"嫌疑"测试文件
+  //（至少 proxy-config / nginx-log-paths / update-state），最后断言快照未变。
+  // 关键：测试必须能因"某个文件漏了 setup 那一行"而变红 —— 先故意去掉一行验证它会红。
+test('a unit test file that loads a service pulls in the temp-db helper first', ...)
+  // 静态扫 src/test/**/*.test.js：凡是 require 了 src/services 或 src/db 或 src/app 的文件，
+  // 必须在其之前 require '../helpers/setup'；显式白名单放过 git-lifecycle-repo.test.js 这种有意为之者，
+  // 白名单里每一项都要写一句理由。
+```
+
+- [ ] **Step 3: 跑它确认失败** — Run: `cd server && node --test src/test/unit/test-db-isolation.test.js`；Expected: FAIL（列出真会开库的文件）
+- [ ] **Step 4: 给判定为"真会开库"的文件补上 `require('../helpers/setup')`**（放在任何 service require 之前，注释照 `npm-fingerprints.test.js` 的写法）。补完重跑 Step 3。
+- [ ] **Step 5: 全量回归 + 稳定性自检** — `cd server && npm test` 连续跑 3 次，Expected: 三次同数、全绿（证明信号不再抖）
+- [ ] **Step 6: 提交**
+
+```bash
+git add server/src/test/
+git commit -m "test: keep every test file off the developer's real sqlite file"
+```
+
+---
+
 ### Task 8: `deploy` 摘要附带 + `GET /api/apps/:id/deploy`
 
 **Files:**
