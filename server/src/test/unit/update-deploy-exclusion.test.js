@@ -48,10 +48,14 @@ function stubUntilGuard(t) {
 }
 
 // The remaining preflight checks (git tree, remote, PM2), stubbed so a
-// green-light past the guard is provable all the way to ok:true.
-function stubRestOfPreflight() {
+// green-light past the guard is provable all the way to ok:true. Since the
+// Task 10 review round moved the guard AFTER these checks, every test that
+// reaches the guard must stub them (a real getCurrentVersion/getLatestVersion
+// would shell out to git and write the real data/update-check.json).
+function stubRestOfPreflight(overrides = {}) {
   mock.method(UpdateManager, 'execFileAsync', async (file, args) => {
     const cmd = args.join(' ');
+    if (overrides[cmd]) return overrides[cmd];
     switch (cmd) {
       case 'rev-parse --is-inside-work-tree': return { stdout: 'true\n', stderr: '' };
       case 'rev-parse HEAD': return { stdout: SHA + '\n', stderr: '' };
@@ -76,6 +80,7 @@ test('preflight refuses an update while a deploy job is live', async (t) => {
   await DeployJobs.advance(app.id, 'install');
 
   stubUntilGuard(t);
+  stubRestOfPreflight();
   try {
     const r = await UpdateManager.preflight();
     // The operator deciding whether to wait needs the blocking app and its
@@ -111,6 +116,64 @@ test('preflight allows the update once the job is dead-pid stale', async (t) => 
     assert.deepEqual(r, { ok: true, fromSha: SHA, toSha: NEW_SHA });
   } finally {
     await dbRun('DELETE FROM app_deploy_job WHERE app_id = ?', [app.id]);
+    mock.restoreAll();
+  }
+});
+
+test('preflight keeps an existing refusal wording when a live job also blocks', async (t) => {
+  // Review round (Minor 1, mandatory): the new guard must be ADDITIVE, not a
+  // reordering. With BOTH a dirty tree and a live deploy job, the operator
+  // must still see '工作区有未提交改动' — "请等待完成" would not clear that
+  // second blocker, and pre-Task-10 conditions must keep their exact strings.
+  const app = await AppManager.createApp('excl-dirty-order', 'npm');
+  isolateLogDir(t);
+  mock.method(DeployJobs, 'isUpdateRunning', () => false);
+  const claim = await DeployJobs.claim(app, DeployJobs.KINDS.START);
+  assert.equal(claim.ok, true);
+  await DeployJobs.advance(app.id, 'install');
+
+  stubUntilGuard(t);
+  stubRestOfPreflight({
+    'status --porcelain --untracked-files=no': { stdout: ' M package.json\n', stderr: '' }
+  });
+  try {
+    const r = await UpdateManager.preflight();
+    assert.deepEqual(r, { ok: false, httpStatus: 400, message: '工作区有未提交改动' });
+  } finally {
+    await DeployJobs.finish(app.id, { ok: false, message: 'cleanup' });
+    mock.restoreAll();
+  }
+});
+
+test('startUpdate releases the lock and refuses when a deploy job appeared after preflight', async (t) => {
+  // Review round (Important 1): preflight scans the job table BEFORE the
+  // update lock exists; a deploy can win its claim inside that window. Once
+  // the lock is held, startUpdate must re-check and back out itself —
+  // simulated here as the job table going non-empty between the two reads.
+  const paths = tmpUpdatePaths();
+  t.after(() => fs.rmSync(paths._root, { recursive: true, force: true }));
+  let spawns = 0;
+  mock.method(UpdateManager, 'spawnDetached', () => {
+    spawns += 1;
+    return { pid: 4321, unref() {}, on() {} };
+  });
+  mock.method(DeployJobs, 'anyActiveJob', async () => ({
+    app_name: 'excl-appeared', step: 'install', status: 'running'
+  }));
+  try {
+    const r = await UpdateManager.startUpdate({ fromSha: SHA, toSha: NEW_SHA, paths });
+    assert.deepEqual(r, {
+      ok: false,
+      httpStatus: 409,
+      message: '有应用正在部署（excl-appeared · install），请等待完成'
+    });
+    assert.equal(spawns, 0, 'the re-check must run before any state write or spawn');
+    assert.equal(fs.existsSync(paths.lockPath), false, 'the just-claimed lock must be released');
+    assert.equal(
+      fs.existsSync(paths.statePath), false,
+      'a refused start writes no update state — same convention as a lost claimLock race'
+    );
+  } finally {
     mock.restoreAll();
   }
 });

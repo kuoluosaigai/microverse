@@ -400,6 +400,18 @@ class UpdateManager {
   }
 
   /**
+   * THE single producer of the deploy-blocks-update wording (Task 10):
+   * preflight's guard and startUpdate's post-lock re-check must answer
+   * identically. Names the blocking app and its step — an operator deciding
+   * whether to wait needs that, not a bare "busy". Fixed wording (Task 11).
+   * @param {{app_name?: string, step?: string}} blocking
+   * @returns {string}
+   */
+  static deployBlockMessage(blocking) {
+    return `有应用正在部署（${blocking.app_name} · ${blocking.step}），请等待完成`;
+  }
+
+  /**
    * Cheap, synchronous-order gate performed by the route before spawning the
    * detached update runner. Ancestry/divergence resolution is deferred to the
    * runner (see later tasks).
@@ -416,24 +428,6 @@ class UpdateManager {
     }
     if (this.isUpdateRunning()) {
       return { ok: false, httpStatus: 409, message: '已有更新正在进行' };
-    }
-
-    // Mutual exclusion, forward half (spec decision 9). The check above and
-    // DeployJobs.claim's 'updating' gate are the same lock read from the
-    // update side; this is the deploy side read from the update side: an
-    // update ends in `pm2 reload`, which restarts every worker and would
-    // kill any in-flight deploy mid-install/mid-build, so a live job on ANY
-    // app refuses ANY update. 409 matches the deploy-conflict convention
-    // (busy claim / assertIdle / the isUpdateRunning refusal above).
-    const blocking = await deployJobs().anyActiveJob();
-    if (blocking) {
-      // Names the blocking app and its step — an operator deciding whether
-      // to wait needs that, not a bare "busy". Fixed wording (Task 11).
-      return {
-        ok: false,
-        httpStatus: 409,
-        message: `有应用正在部署（${blocking.app_name} · ${blocking.step}），请等待完成`
-      };
     }
 
     const current = await this.getCurrentVersion();
@@ -456,6 +450,26 @@ class UpdateManager {
     // needs a live PM2 process to reload and health-check.
     if (!(await this.isPm2Online())) {
       return { ok: false, httpStatus: 400, message: 'PM2 进程未在线（检查 PM2_INSTANCE_NAME）' };
+    }
+
+    // Mutual exclusion, forward half (spec decision 9): an update ends in
+    // `pm2 reload`, which restarts every worker and would kill any in-flight
+    // deploy mid-install/mid-build, so a live job on ANY app refuses ANY
+    // update — including the repair run below (it reloads too). 409 matches
+    // the deploy-conflict convention (busy claim / assertIdle / the
+    // isUpdateRunning refusal above).
+    // POSITION is load-bearing (Task 10 review, Minor 1): deliberately AFTER
+    // every pre-existing check, not just "added". Under the combination
+    // "live deploy + dirty tree" the operator must keep seeing
+    // '工作区有未提交改动' — "请等待完成" does not clear that second blocker,
+    // and the badge/UI depends on existing strings under existing conditions.
+    // The cost is 4 execFile calls before a busy refusal; this is a manual
+    // click path only (getVersionInfo never calls preflight), and the same
+    // question is re-answered cheaply and race-free by startUpdate's
+    // post-lock re-check below.
+    const blocking = await deployJobs().anyActiveJob();
+    if (blocking) {
+      return { ok: false, httpStatus: 409, message: this.deployBlockMessage(blocking) };
     }
 
     const incomplete = this.getIncompleteUpdate();
@@ -546,10 +560,10 @@ class UpdateManager {
   }
 
   /**
-   * Validate, claim the lock atomically, record a `running` state and spawn
-   * the detached self-update runner (scripts/self-update.js). Returns the
-   * child pid; the runner takes over the lock and rewrites state as it
-   * progresses.
+   * Validate, claim the lock atomically, re-check deploy exclusion, record a
+   * `running` state and spawn the detached self-update runner
+   * (scripts/self-update.js). Returns the child pid; the runner takes over
+   * the lock and rewrites state as it progresses.
    *
    * @param {{fromSha: string, toSha: string, paths?: object}} args
    * @returns {Promise<{ok:true, pid:number}
@@ -571,6 +585,29 @@ class UpdateManager {
         // best-effort
       }
     };
+
+    // TOCTOU close (Task 10 review, Important 1): preflight scanned the job
+    // table BEFORE this lock existed, and several execFile calls sat between
+    // that scan and this claim — a deploy could win its claim in the window.
+    // NOW the lock is held, so DeployJobs.claim refuses anything NEW; if a
+    // job still shows live it was won inside the gap, and starting anyway
+    // would `pm2 reload` straight through it. Back out: release the lock,
+    // refuse with preflight's exact wording, write no state — the same
+    // bookkeeping convention as a lost claimLock race above. A job-table read
+    // failure cannot PROVE idleness, so it releases and rethrows rather than
+    // letting a half-confirmed update through (the route's catch answers 500;
+    // leaving the lock behind would instead wedge updates for this pid).
+    let blocking;
+    try {
+      blocking = await deployJobs().anyActiveJob();
+    } catch (err) {
+      removeLock();
+      throw err;
+    }
+    if (blocking) {
+      removeLock();
+      return { ok: false, httpStatus: 409, message: this.deployBlockMessage(blocking) };
+    }
 
     const state = {
       status: 'running', step: 'queued', fromSha, toSha,

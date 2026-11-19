@@ -184,6 +184,30 @@ test('a pull while a start job holds the app is 409', async () => {
   await DeployJobs.finish(app.id, { ok: true });
 });
 
+test('a pull whose claim loses to the self-update lock is 409 with the update wording', async () => {
+  // Task 10 review (Important 2): the fast-path 409 above never reaches the
+  // route's claim-failure mapping — the `!claim.ok` block the Task 10 Step 0
+  // extraction moved into sendClaimFailure had NO test on the pull side.
+  // This pins it: 'updating' -> 409 with the self-update-lock wording,
+  // identical to the start route's mapping (one producer now).
+  const { app } = await makeGitApp('pull-claim-updating');
+  stubClaimEnvironment();
+  // Fast-path assertIdle sees no job row; the ATOMIC claim then loses to a
+  // held platform update lock (the race itself is not reproducible
+  // single-process, so drive the reason->status mapping directly, matching
+  // deploy-status-api's start-side pins).
+  mock.method(DeployJobs, 'claim', async () => ({ ok: false, reason: 'updating' }));
+  const syncMock = mock.method(GitLifecycle, 'sync', async () => {
+    throw new Error('a rejected pull must not start a sync');
+  });
+
+  const agent = await adminAgent();
+  const res = await agent.post(`/api/apps/${app.id}/git/pull`).expect(409);
+  assert.equal(res.body.error.message, '平台正在自更新，请稍后再试');
+  assert.equal(syncMock.mock.callCount(), 0);
+  assert.equal(await queries.getDeployJob(app.id), null, 'a losing claim creates no job row');
+});
+
 test('pull writes its npm output into the job log file', async () => {
   const { app, src } = await makeGitApp('pull-log');
   stubClaimEnvironment();
