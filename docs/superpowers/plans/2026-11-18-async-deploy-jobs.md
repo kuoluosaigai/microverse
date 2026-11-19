@@ -301,7 +301,13 @@ git commit -m "feat(npm): capture install/build output into a job log file"
 - Produces:
   - `DeployManager.deployApp(appId, { onStep = null, logFile = null } = {})`
   - `NpmLifecycle.ensureBuilt(appId, appPath, { force = false, logFile = null, onStep = null } = {})`
-  - 上报顺序固定：`validate → [git] → [install] → [build] → launch → proxy`（方括号按 deploy_type/git 绑定出现）
+  - 上报顺序固定为**真实执行顺序**，每步在它命名的那件工作即将开始之前上报：
+    `[git] → validate → [install] → [build] → launch → [proxy]`（方括号按 deploy_type / git 绑定 / 指纹闸门出现）。
+    **注意：git prepare 在 validate 之前跑**（`deploy-manager.js` 的既有编排如此），所以绑定 git 的应用
+    第一个上报的步骤是 `git`，不是 `validate` —— 早先本任务写"以 validate 开头"是我对编排顺序的误记。
+    把 `validate` 提前上报会让 UI 在几分钟的 clone/fetch 期间显示"校验文件中"，那是另一种谎。
+  - **跳过的步骤一律不上报**（Ruling 1，见 Step 3 的两条测试）：install/build 被指纹闸门跳过时不报；
+    `ProxyManager.regenerate()` 在 `PROXY_ENABLED=false` 时返回 `skipped`，此时**不报 `proxy`**。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -326,6 +332,38 @@ test('a throwing onStep does not fail the deploy', ...)
 ```bash
 git add server/src/services/deploy-manager.js server/src/services/npm-lifecycle.js server/src/test/unit/deploy-step-reporting.test.js
 git commit -m "feat(deploy): let deployApp report its progress steps to a caller"
+```
+
+---
+
+### Task 5b: step 名收拢到叶子常量模块（Task 5 审查后追加）
+
+**Files:**
+- Create: `server/src/utils/deploy-steps.js`
+- Modify: `server/src/services/deploy-jobs.js`（`STEPS`/`KINDS` 改为从这里取）
+- Modify: `server/src/services/deploy-manager.js`、`server/src/services/npm-lifecycle.js`（上报处引用常量）
+- Test: `server/src/test/unit/deploy-step-reporting.test.js`（断言常量即唯一来源）
+
+**Interfaces:**
+- Produces: `DEPLOY_STEPS`（有序数组）、`DEPLOY_STEP`（`{ QUEUED, VALIDATE, GIT, INSTALL, BUILD, LAUNCH, PROXY, DONE }`）、`DEPLOY_KINDS`
+- Consumes: 无（叶子模块，不 require 任何 service）
+
+- [ ] **Step 1: 写失败测试** —— 断言 service 层上报的字面量与 `DEPLOY_STEP` 同源：
+
+```js
+test('reported step names come from the shared constants, not per-file literals', ...)
+test('deploy-steps is a leaf module: requiring it pulls in no services', ...)
+  // 断言 require 该模块后 require.cache 里没有 deploy-jobs/deploy-manager（把"无环"钉成测试而不是注释）
+```
+
+- [ ] **Step 2: 跑测试确认失败** — Run: `cd server && node --test src/test/unit/deploy-step-reporting.test.js`；Expected: FAIL
+- [ ] **Step 3: 建常量模块并替换三处字面量** —— 方向必须是 service → utils，绝不能反向（`deploy-jobs` 现在自己持有 `STEPS`，改为再导出）。
+- [ ] **Step 4: 跑测试确认通过 + 全量回归** — Expected: 全绿，基线不掉
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/src/utils/deploy-steps.js server/src/services/deploy-jobs.js server/src/services/deploy-manager.js server/src/services/npm-lifecycle.js server/src/test/unit/deploy-step-reporting.test.js
+git commit -m "refactor(deploy): give deploy steps one source of truth"
 ```
 
 ---
