@@ -7,8 +7,14 @@ import {
   unbindAppGit,
   rotateAppGitSecret,
   checkAppGit,
-  pullAppGit
+  pullAppGit,
+  getDeployStatus
 } from '../api/apps'
+import DeployLogDrawer from './DeployLogDrawer'
+
+// Poll cadence for a submitted pull job (UpdateModal's cadence). The route
+// that returned 202 owns nothing further — the job row is the only reporter.
+const PULL_POLL_INTERVAL_MS = 2000
 
 const shortSha = (sha) => (sha ? sha.slice(0, 7) : '—')
 
@@ -47,14 +53,37 @@ function GitModal({ open, app, onClose, onChanged }) {
   const [checking, setChecking] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [showSecret, setShowSecret] = useState(false)
+  // Pull is async now (202 + deploy job): these track the in-flight job's
+  // summary, whether it ended failed (→ log entry), and the log drawer.
+  const [pullJob, setPullJob] = useState(null)
+  const [pullFailed, setPullFailed] = useState(false)
+  const [pullLogOpen, setPullLogOpen] = useState(false)
+  const intervalRef = useRef(null)
+  // 'job': we submitted this pull (its deploy row is the truth);
+  // 'git': we are only watching a sync someone else started (webhook), so
+  // the git summary's last_status is the only thing that may be trusted.
+  const pullOwnerRef = useRef(null)
 
   // Async operations can settle after the modal closed (destroyOnClose unmounts
   // the Form). Writing to an unconnected form logs a React warning, so only
   // sync fields while the modal is actually open.
   const openRef = useRef(open)
-  useEffect(() => {
-    openRef.current = open
-  }, [open])
+
+  // The pull poller's single timer. Every stop path runs through here, and the
+  // close effect below plus the unmount effect are its guaranteed deleters.
+  const stopPullPolling = useCallback(() => {
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+  }, [])
+
+  // AppRow can unmount while the modal is open (route change, app deleted in
+  // another tab's refresh): without this the interval would outlive the tree.
+  useEffect(() => () => {
+    openRef.current = false
+    stopPullPolling()
+  }, [stopPullPolling])
 
   const fillForm = useCallback(
     (data) => {
@@ -89,10 +118,23 @@ function GitModal({ open, app, onClose, onChanged }) {
   }, [appId, fillForm, t])
 
   useEffect(() => {
-    if (!open) return
+    openRef.current = open
+    if (!open) {
+      // Closed: stop any pull poll and drop the task state. Reopening
+      // re-derives it from the server (load → lastStatus 'updating' → resume),
+      // so a pull that finished while closed — or was started elsewhere —
+      // cannot desync the UI.
+      stopPullPolling()
+      setPulling(false)
+      setPullJob(null)
+      pullOwnerRef.current = null
+      return
+    }
     setShowSecret(false)
+    setPullFailed(false)
+    setPullLogOpen(false)
     load()
-  }, [open, load])
+  }, [open, load, stopPullPolling])
 
   const copyText = async (text) => {
     try {
@@ -200,20 +242,127 @@ function GitModal({ open, app, onClose, onChanged }) {
     }
   }
 
+  // Pull is a background deploy job now: POST …/git/pull answers 202 the
+  // moment the platform claims the job, and the response body says nothing
+  // about the outcome. Convergence therefore happens ONLY through polling —
+  // reporting success here was the old bug (a 2xx toast before anything had
+  // been fetched).
+  const settlePull = useCallback((ok) => {
+    // `pullOwnerRef.current` doubles as the one-shot claim: concurrent
+    // in-flight polls (fetch slower than the 2s tick) must not settle — and
+    // toast — twice. The first settle revokes the claim synchronously.
+    if (pullOwnerRef.current === null) return
+    stopPullPolling()
+    pullOwnerRef.current = null
+    setPulling(false)
+    setPullJob(null)
+    if (ok) {
+      setPullFailed(false)
+      message.success(t('git.pullSuccess'))
+    } else {
+      setPullFailed(true)
+      message.error(t('git.pullFailed'))
+    }
+    // Refresh the git summary (deployed commit / last_status) after the job —
+    // never before it converges.
+    load()
+    onChanged?.()
+  }, [stopPullPolling, t, load, onChanged])
+
+  const pollPull = useCallback(async () => {
+    if (!openRef.current || pullOwnerRef.current === null) {
+      // Closed, or a sibling in-flight poll already settled this run.
+      stopPullPolling()
+      return
+    }
+    try {
+      if (pullOwnerRef.current === 'git') {
+        // Watching a sync we did not submit (webhook-triggered, or resumed
+        // after reopen): the git summary is the only truth to converge on.
+        const data = await getAppGit(appId)
+        if (!openRef.current) {
+          stopPullPolling()
+          return
+        }
+        setSource(data)
+        fillForm(data)
+        if (data?.lastStatus === 'updating') return
+        settlePull(data?.lastStatus !== 'failed')
+        return
+      }
+      // Owner 'job': our pull claimed the deploy row before the 202 was sent,
+      // so the row is authoritative until it stops being ours.
+      const data = await getDeployStatus(appId)
+      if (!openRef.current) {
+        stopPullPolling()
+        return
+      }
+      const job = data?.job ?? null
+      if (job && job.kind === 'pull') {
+        setPullJob(job.live ? job : null)
+        if (!job.live) settlePull(job.status === 'succeeded')
+        return
+      }
+      // Row gone (app deleted — the next getAppGit 404 ends it) or already
+      // taken over by a newer job, which implies ours finished unseen:
+      // hand convergence to the git summary.
+      pullOwnerRef.current = 'git'
+    } catch (error) {
+      if (!openRef.current) {
+        stopPullPolling()
+        return
+      }
+      // Same taxonomy as UpdateModal.poll: transport/5xx are transient (keep
+      // polling); only a definitive 4xx is fatal, and its server-produced
+      // message is shown as-is.
+      const status = error?.response?.status
+      const fatal = status === 400 || status === 401 || status === 403 || status === 404
+      if (!fatal) return
+      stopPullPolling()
+      pullOwnerRef.current = null
+      setPulling(false)
+      setPullJob(null)
+      message.error(errorMessage(error, t('git.pullFailed')))
+    }
+  }, [appId, stopPullPolling, settlePull, fillForm, t])
+
+  const startPullPolling = useCallback(() => {
+    if (!openRef.current) return
+    if (intervalRef.current === null) {
+      intervalRef.current = window.setInterval(pollPull, PULL_POLL_INTERVAL_MS)
+    }
+  }, [pollPull])
+
+  // Resume polling for an already-live sync (webhook running, or a pull
+  // submitted in another session) discovered on load — UpdateModal's rule:
+  // only active runs re-arm the timer, terminal states never do.
+  useEffect(() => {
+    if (!open || pulling) return
+    if (source?.lastStatus === 'updating') {
+      pullOwnerRef.current = 'git'
+      setPulling(true)
+      startPullPolling()
+    }
+  }, [open, pulling, source, startPullPolling])
+
   const pull = async () => {
-    // Guard against a second click landing while the first pull is running:
-    // the server would answer 409 anyway, but the loading state must win.
+    // Local re-entry guard only — true exclusion is the server's deploy-job
+    // claim (a second pull answers 409), so never treat this as a lock.
     if (pulling) return
     setPulling(true)
+    setPullFailed(false)
     try {
       await pullAppGit(appId)
-      message.success(t('git.pullSuccess'))
-      await load()
-      onChanged?.()
+      if (!openRef.current) return
+      pullOwnerRef.current = 'job'
+      startPullPolling()
+      pollPull()
     } catch (error) {
-      message.error(errorMessage(error, t('git.pullFailed')))
-    } finally {
+      if (!openRef.current) return
       setPulling(false)
+      // 409 busy texts have ONE producer (DeployJobs.busyMessage) — display
+      // them verbatim, never re-assemble the sentence client-side.
+      message.error(errorMessage(error, t('git.pullFailed')))
     }
   }
 
@@ -366,10 +515,41 @@ function GitModal({ open, app, onClose, onChanged }) {
                   {pulling ? t('git.pulling') : t('git.pull')}
                 </Button>
               </div>
+
+              {pulling && pullJob?.step && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    color: 'var(--accent)',
+                    fontFamily: 'var(--mono)',
+                    fontSize: 12
+                  }}
+                >
+                  {`● ${t('appCard.deploy.live')} · ${t(`appCard.deploy.step.${pullJob.step}`)}`}
+                </div>
+              )}
+
+              {pullFailed && (
+                <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <span style={{ color: '#cf1322', fontFamily: 'var(--mono)', fontSize: 12 }}>
+                    {`✖ ${t('git.pullFailed')}`}
+                  </span>
+                  <Button size="small" onClick={() => setPullLogOpen(true)}>
+                    {t('appCard.deploy.log')}
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </>
       </Spin>
+
+      <DeployLogDrawer
+        appId={appId}
+        appName={app?.name}
+        open={pullLogOpen}
+        onClose={() => setPullLogOpen(false)}
+      />
     </Modal>
   )
 }

@@ -51,12 +51,18 @@ function Dashboard() {
   }, [])
 
   const handleStart = async (appId) => {
+    // start now answers 202 the moment the platform claims the deploy job.
+    // `startingId` only bridges click → refreshed list; the persistent
+    // "deploying" display comes from the server-carried `deploy.live` in the
+    // app row (survives a page refresh — a re-mount re-derives it from data).
     setStartingId(appId)
     try {
       await startApp(appId)
-      message.success(t('messages.appStarted'))
+      message.success(t('messages.deployStarted'))
       await loadApps(true)
     } catch (error) {
+      // The server's own texts (busy 409 from DeployJobs.busyMessage, 400
+      // pre-flight refusals) are shown as-is; one producer, no local re-wording.
       message.error(error.response?.data?.error?.message || t('messages.operationFailed'))
     } finally {
       setStartingId(null)

@@ -130,7 +130,26 @@
     "backup": "Backup",
     "rootDefault": "Root domain",
     "git": "Git",
-    "gitUpdateAvailable": "Update available"
+    "gitUpdateAvailable": "Update available",
+    "deploy": {
+      "live": "Deploying",
+      "progress": "Step {{current}} of {{total}}",
+      "busy": "A deploy is in progress — wait for it to finish",
+      "log": "View log",
+      "drawerTitle": "Deploy log",
+      "logEmpty": "No deploy output yet",
+      "step": {
+        "queued": "Queued",
+        "git": "syncing Git repository",
+        "validate": "validating deployment",
+        "install": "installing dependencies",
+        "build": "building",
+        "nginx": "validating nginx config",
+        "launch": "launching process",
+        "proxy": "updating reverse proxy",
+        "done": "done"
+      }
+    }
   },
   "git": {
     "title": "Git source",
@@ -296,6 +315,7 @@
     "appCreated": "Application created successfully",
     "appDeleted": "Application deleted successfully",
     "appStarted": "Application started successfully",
+    "deployStarted": "Deploy job started — watch progress in the app row",
     "appStopped": "Application stopped successfully",
     "filesUploaded": "Files uploaded successfully",
     "operationFailed": "Operation failed",

@@ -8,12 +8,47 @@ import { useAppConfig } from '../context/AppConfigContext'
 import { buildAppUrl, buildRootUrl } from '../utils/app-url'
 import EnvModal from './EnvModal'
 import GitModal from './GitModal'
+import DeployLogDrawer from './DeployLogDrawer'
+
+// Mirror of the server's utils/deploy-steps ladder: array order == report
+// order == real execution order, so indexOf is a safe "phase N of M" index
+// and the denominator drops the `queued`/`done` bookends. Keep in sync with
+// the server — a step missing from the i18n tables renders as a raw key.
+const DEPLOY_STEPS = ['queued', 'git', 'validate', 'install', 'build', 'nginx', 'launch', 'proxy', 'done']
+
+// Terminal (failed) summaries stop being shown this long after the job
+// finished (spec decision 6 sketch: "任务终态摘要 3 分钟后不再显示"; the
+// duration is an implementation choice). Re-evaluated on every render, which
+// the Dashboard's 10s silent refresh guarantees — no timer here.
+const DEPLOY_SUMMARY_TTL_MS = 3 * 60 * 1000
+
+// SQLite CURRENT_TIMESTAMP is UTC without a zone marker (GitModal.formatTime
+// does the same fix-up). Unparseable/missing ⇒ treated as fresh, so a
+// formatting surprise hides nothing.
+const isFreshTerminal = (finishedAt) => {
+  if (!finishedAt) return true
+  const raw = String(finishedAt)
+  const iso = raw.includes('T') ? raw : raw.replace(' ', 'T')
+  const ms = new Date(iso.endsWith('Z') ? iso : `${iso}Z`).getTime()
+  if (Number.isNaN(ms)) return true
+  return Date.now() - ms < DEPLOY_SUMMARY_TTL_MS
+}
 
 function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, startingId, onRefresh }) {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const appConfig = useAppConfig()
   const isRunning = app.status === 'running'
+  // `deploy` is attached by the server to every list/detail app object; the
+  // create-app response omits it entirely (undefined, not null) — stay
+  // defensive.
+  const deploy = app.deploy ?? null
+  const deploying = Boolean(deploy && deploy.live)
+  const deployFailedInline = Boolean(
+    deploy && !deploy.live && deploy.status === 'failed' && isFreshTerminal(deploy.finishedAt)
+  )
+  const stepIndex = deploy && deploy.step ? DEPLOY_STEPS.indexOf(deploy.step) : -1
+  const busyTitle = deploying ? t('appCard.deploy.busy') : undefined
 
   const [dirOpen, setDirOpen] = useState(false)
   const [files, setFiles] = useState([])
@@ -22,6 +57,7 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
   const [gitOpen, setGitOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteFiles, setDeleteFiles] = useState(false)
+  const [deployLogOpen, setDeployLogOpen] = useState(false)
   const starting = startingId === app.id
 
   const openDir = async () => {
@@ -82,6 +118,18 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
               )}
             </div>
           )}
+          {deployFailedInline && (
+            <div className="sub" style={{ textTransform: 'none', marginTop: 2 }}>
+              <span style={{ color: '#cf1322' }}>{`✖ ${deploy.message || '—'}`}</span>
+              <button
+                className="text-link"
+                style={{ marginLeft: 8 }}
+                onClick={() => setDeployLogOpen(true)}
+              >
+                {t('appCard.deploy.log')}
+              </button>
+            </div>
+          )}
         </div>
         <div className="port">
           {app.port ? (
@@ -111,16 +159,30 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
           )}
         </div>
         <div className="kind">{app.deploy_type}</div>
-        <div className={`status ${isRunning ? 'live' : 'idle'}`}>
-          {t(`appCard.status.${app.status}`)}
+        <div
+          className={`status ${deploying || isRunning ? 'live' : 'idle'}`}
+          title={
+            deploying && stepIndex >= 0
+              ? t('appCard.deploy.progress', { current: stepIndex + 1, total: DEPLOY_STEPS.length - 2 })
+              : undefined
+          }
+        >
+          {deploying
+            ? `● ${t('appCard.deploy.live')}${deploy.step ? ` · ${t(`appCard.deploy.step.${deploy.step}`)}` : ''}`
+            : t(`appCard.status.${app.status}`)}
         </div>
         <div className="acts">
           {isRunning ? (
-            <button className="act" onClick={() => onStop(app.id)}>
+            <button className="act" onClick={() => onStop(app.id)} disabled={deploying} title={busyTitle}>
               {t('appCard.stop')}
             </button>
           ) : (
-            <button className="act" onClick={() => onStart(app.id)} disabled={starting}>
+            <button
+              className="act"
+              onClick={() => onStart(app.id)}
+              disabled={starting || deploying}
+              title={busyTitle}
+            >
               {starting ? t('appCard.starting') : t('appCard.start')}
             </button>
           )}
@@ -137,6 +199,8 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
             <button
               className="act"
               onClick={() => navigate(`/apps/${app.id}/upload`)}
+              disabled={deploying}
+              title={busyTitle}
             >
               {t('appCard.upload')}
             </button>
@@ -155,18 +219,29 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
             {t('appCard.backup')}
           </button>
           {app.deploy_type === 'npm' && (
-            <button className="act" onClick={() => setEnvOpen(true)}>
+            <button
+              className="act"
+              onClick={() => setEnvOpen(true)}
+              disabled={deploying}
+              title={busyTitle}
+            >
               {t('appCard.env')}
             </button>
           )}
-          <button className="act" onClick={() => setGitOpen(true)}>
+          <button
+            className="act"
+            onClick={() => setGitOpen(true)}
+            disabled={deploying}
+            title={busyTitle}
+          >
             {t('appCard.git')}
           </button>
           {appConfig?.proxyEnabled && isRunning && app.port && (
-            <span className="default-toggle">
+            <span className="default-toggle" title={busyTitle}>
               <Switch
                 size="small"
                 checked={!!app.is_default}
+                disabled={deploying}
                 onChange={(checked) => onToggleDefault(app, checked)}
               />
               <span className="default-toggle__label">{t('appCard.rootDefault')}</span>
@@ -175,7 +250,8 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
           <button
             className="act"
             onClick={() => setDeleteOpen(true)}
-            disabled={isRunning}
+            disabled={isRunning || deploying}
+            title={busyTitle}
           >
             {t('appCard.delete')}
           </button>
@@ -258,6 +334,13 @@ function AppRow({ app, index, onStart, onStop, onDelete, onToggleDefault, starti
         app={app}
         onClose={() => setGitOpen(false)}
         onChanged={() => onRefresh?.()}
+      />
+
+      <DeployLogDrawer
+        appId={app.id}
+        appName={app.name}
+        open={deployLogOpen}
+        onClose={() => setDeployLogOpen(false)}
       />
 
     </>

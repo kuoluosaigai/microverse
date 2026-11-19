@@ -130,7 +130,26 @@
     "backup": "备份",
     "rootDefault": "根域名",
     "git": "Git",
-    "gitUpdateAvailable": "有更新"
+    "gitUpdateAvailable": "有更新",
+    "deploy": {
+      "live": "部署中",
+      "progress": "第 {{current}} 步 / 共 {{total}} 步",
+      "busy": "部署进行中，请等待完成后再操作",
+      "log": "看日志",
+      "drawerTitle": "部署日志",
+      "logEmpty": "暂无部署输出",
+      "step": {
+        "queued": "排队中",
+        "git": "同步 Git 仓库",
+        "validate": "校验部署文件",
+        "install": "安装依赖",
+        "build": "构建",
+        "nginx": "预检 nginx 配置",
+        "launch": "启动进程",
+        "proxy": "更新反向代理",
+        "done": "完成"
+      }
+    }
   },
   "git": {
     "title": "Git 仓库",
@@ -296,6 +315,7 @@
     "appCreated": "应用创建成功",
     "appDeleted": "应用删除成功",
     "appStarted": "应用启动成功",
+    "deployStarted": "部署任务已开始，进度显示在应用行",
     "appStopped": "应用停止成功",
     "filesUploaded": "文件上传成功",
     "operationFailed": "操作失败",

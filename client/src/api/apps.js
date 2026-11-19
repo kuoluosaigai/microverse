@@ -116,11 +116,12 @@ export const checkAppGit = async (id) => {
 }
 
 /**
- * Pull the branch, rebuild and restart. Runs a full lifecycle server-side, so
- * disable the default 10s axios timeout.
+ * Pull the branch, rebuild and restart. This is now a background deploy job:
+ * the request returns 202 the moment the platform claims the job, so the
+ * default 10s axios timeout applies again (a hang here is a real hang).
  */
 export const pullAppGit = async (id) => {
-  const response = await api.post(`/apps/${id}/git/pull`, {}, { timeout: 0 })
+  const response = await api.post(`/apps/${id}/git/pull`, {})
   return response.data.data
 }
 
@@ -135,12 +136,23 @@ export const deleteApp = async (id, deleteFiles = false) => {
 }
 
 /**
- * Start an application
+ * Start an application. Deploys are background jobs now: this answers 202 as
+ * soon as the job is claimed (install/build/launch happen off the request), so
+ * the default 10s timeout stays on — progress arrives via the app list's
+ * `deploy` summary and getDeployStatus.
  */
 export const startApp = async (id) => {
-  // npm apps run install/build before launch — can take minutes. Disable the
-  // default 10s axios timeout so the request survives the full lifecycle.
-  const response = await api.post(`/apps/${id}/start`, {}, { timeout: 0 })
+  const response = await api.post(`/apps/${id}/start`, {})
+  return response.data.data
+}
+
+/**
+ * Current deploy job + bounded log tail for an app:
+ * `{ job: {kind,status,step,message,startedAt,finishedAt,live}|null, logTail: string[] }`.
+ * Poll this (no SSE for deploy logs).
+ */
+export const getDeployStatus = async (id) => {
+  const response = await api.get(`/apps/${id}/deploy`)
   return response.data.data
 }
 
