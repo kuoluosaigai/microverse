@@ -13,12 +13,18 @@ const execFilePromise = promisify(execFile);
 // Two independent detectors:
 //  1. Dynamic: run suspect test files as child processes with DB_PATH scrubbed
 //     from the env (exactly how the dev machine hits the fallback at
-//     src/db/index.js:6), and prove none of them opens <repo>/data/*.sqlite —
-//     both by the db module's own init log line and by a size+mtime snapshot
-//     of the real files. The snapshot alone is NOT enough: opening an
-//     already-initialized DB runs only `CREATE TABLE IF NOT EXISTS` no-ops
-//     and leaves the file byte-identical, so the log-line probe is what
-//     catches "the file was opened at all".
+//     src/db/index.js:6) and NODE_ENV pinned to 'development', and prove none
+//     of them opens <repo>/data/*.sqlite — both by the db module's own init
+//     log line and by a size+mtime snapshot of the real files. The snapshot
+//     alone is NOT enough: opening an already-initialized DB runs only
+//     `CREATE TABLE IF NOT EXISTS` no-ops and leaves the file byte-identical,
+//     so the log-line probe is what catches "the file was opened at all".
+//     The probe pins NODE_ENV=development because the db boot logs are gated
+//     to non-test environments — whether the line prints is then decided by
+//     the production gate itself, never by what default the test env happens
+//     to have. helpers/setup sets NODE_ENV='test' unconditionally before it
+//     requires db, so an isolated child stays silent and only a leaky child
+//     (which never loads the helper) can print the line.
 //  2. Static: scan every *.test.js for module-load paths to src/db and require
 //     that helpers/setup (which points DB_PATH at a per-run temp dir) is
 //     required BEFORE the first such load — the house pattern documented in
@@ -255,11 +261,16 @@ test('the whole suite never creates or modifies the repo data/microverse.sqlite'
   // Scrub the fallback-defining vars so a child WITHOUT helpers/setup resolves
   // DB_PATH to <repo>/data/microverse.sqlite (the exact failure mode under
   // test); a child WITH setup sets its own temp path and is unaffected.
+  // NODE_ENV is pinned to 'development' so the db boot logs (gated to non-test
+  // envs in src/db/index.js) are printable: an isolated child flips it back to
+  // 'test' via helpers/setup before db loads and stays silent, so a printed
+  // path is by itself proof of a leak. The probe never relies on the ambient
+  // NODE_ENV default.
   const env = { ...process.env };
   delete env.DB_PATH;
   delete env.SESSION_DB_PATH;
   delete env.APPS_DIR;
-  delete env.NODE_ENV;
+  env.NODE_ENV = 'development';
 
   const results = await Promise.all(DYNAMIC_SUSPECTS.map((f) => {
     const target = path.join(UNIT_DIR, f);
@@ -279,8 +290,11 @@ test('the whole suite never creates or modifies the repo data/microverse.sqlite'
 
   const openers = [];
   for (const r of results) {
-    // src/db/index.js:84 unconditionally logs the path it connected to; any
-    // child naming the repo's real file opened the developer's database.
+    // With NODE_ENV pinned to 'development' above, a child that loads src/db
+    // without helpers/setup prints "Database path: <where it connected>" (the
+    // boot logs are gated to non-test envs; the helper flips NODE_ENV back to
+    // 'test' first, so an isolated child prints nothing at all). Any child
+    // naming the repo's real file opened the developer's database.
     const m = r.out.match(/Database path:\s*(.+)/);
     const resolved = m ? path.resolve(m[1].trim()) : null;
     if (resolved && resolved.toLowerCase() === REAL_DB.toLowerCase()) {

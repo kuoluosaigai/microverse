@@ -80,8 +80,18 @@ async function initDatabase() {
     await dbExec(schema);
     await applyMigrations();
 
-    console.log('✓ Database initialized successfully');
-    console.log(`✓ Database path: ${DB_PATH}`);
+    // Boot chatter is for real boots only. Every test child that loads this
+    // module used to print 2+ stdout lines, which the repo itself flags as a
+    // threat to the node --test IPC stream (see services/git-lifecycle.js
+    // header comment). helpers/setup sets NODE_ENV=test before requiring db,
+    // so test runs stay silent while development/production keep their
+    // expected boot lines. The DB-isolation fence (test/unit/test-db-
+    // isolation.test.js) spawns its probe children with NODE_ENV=development
+    // on purpose, so a child that still opens the real DB is observable here.
+    if (process.env.NODE_ENV !== 'test') {
+      console.log('✓ Database initialized successfully');
+      console.log(`✓ Database path: ${DB_PATH}`);
+    }
   } catch (error) {
     console.error('✗ Database initialization failed:', error.message);
     throw error;
@@ -95,7 +105,9 @@ async function applyMigrations() {
   const cols = await dbAll(`PRAGMA table_info(apps)`);
   if (!cols.some(c => c.name === 'is_default')) {
     await dbExec(`ALTER TABLE apps ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0`);
-    console.log('✓ Migration: added apps.is_default column');
+    if (process.env.NODE_ENV !== 'test') {
+      console.log('✓ Migration: added apps.is_default column');
+    }
   }
 }
 
