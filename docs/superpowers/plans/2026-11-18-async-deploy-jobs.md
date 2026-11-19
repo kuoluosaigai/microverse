@@ -774,7 +774,14 @@ git commit -m "feat(client): show deploy job progress and gate actions while dep
 ### Task 12: 契约文档与验收清单
 
 **Files:**
-- Modify: `server/src/docs/openapi.yaml`（`/apps/{id}/start`、`/apps/{id}/git/pull` 响应改 202；新增 `/apps/{id}/deploy`）
+- Modify: `server/src/docs/openapi.yaml` —— **逐条核对这份清单，别凭印象写**：
+  1. `POST /apps/{id}/start`：`200 + app` → **`202`** + `{app_id, kind, status}`，并补 `409`（任务忙 / git claim 忙 / 平台自更新）与 `400`（已在运行、非 git 应用缺入口文件）的语义；
+  2. `POST /apps/{id}/git/pull`：`200 + {deployedCommit,status}` → **`202`**，结果改由 `git.last_status` 与任务摘要读；
+  3. 新增 `GET /apps/{id}/deploy` → `{job, logTail}`（注明 `logTail` 服务端有界：默认 200 行 / 64KB，**不接受**客户端放大参数）；
+  4. 应用对象 schema 新增 `deploy` 字段（`{kind,status,step,message,startedAt,finishedAt,live}|null`），
+     并注明与既有 `git` 摘要同样的**附带范围限制**：只有 `GET /apps`、`GET /apps/:id`、`PUT /default` 等
+     经 `getAllApps`/`getAppById` 的响应带它；`POST /apps` 创建响应**不带**（此时是 `undefined` 而非 `null`）——
+     这与 `git` 摘要的既有行为一致，但必须写下来，否则前端会以为两者形状完全相同。
 - Modify: `CLAUDE.md`（端点清单、新服务 `DeployJobs`/`DeployRunner`、`DEPLOY_JOB_STALE_MS`、"部署中写操作 409"语义、Git-source 段落里 pull 变异步）
 - Modify: `docs/manual-verification.md`（新增异步部署冒烟条目）
 
