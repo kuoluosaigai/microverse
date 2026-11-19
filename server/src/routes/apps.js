@@ -4,6 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const AppManager = require('../services/app-manager');
 const DeployManager = require('../services/deploy-manager');
+const DeployJobs = require('../services/deploy-jobs');
+const DeployRunner = require('../services/deploy-runner');
+const GitLifecycle = require('../services/git-lifecycle');
 const LogManager = require('../services/log-manager');
 const BackupManager = require('../services/backup-manager');
 const ProxyManager = require('../services/proxy-manager');
@@ -193,15 +196,90 @@ router.delete('/apps/:id', async (req, res, next) => {
   }
 });
 
-// Start application
+// Start application — 202 + background deploy job. Everything the request can
+// still decide WITHOUT doing the work answers synchronously with its old
+// status code (spec decision 7); everything that requires touching the disk /
+// PM2 / npm now happens in the job and is reported through the job row.
+// Order below is load-bearing: fetch -> job gate -> reconcile (already
+// running) -> validation (non-git only) -> git claim check -> claim -> 202.
 router.post('/apps/:id/start', async (req, res, next) => {
   try {
-    const app = await DeployManager.deployApp(req.params.id);
+    const app = await AppManager.getAppById(req.params.id); // 404 'App not found'
 
-    res.json({
+    // A live deploy job for THIS app means a second start would double-launch
+    // the same work. (claim() below re-checks atomically; this one fails fast.)
+    await DeployJobs.assertIdle(app.id, '启动'); // throws err.status = 409
+
+    // PM2 reconcile (~0.2-1s `jlist`) is worth waiting for: an already-running
+    // app must keep its synchronous 400 instead of a doomed background job.
+    const reconciled = await DeployManager.reconcileStatus(app.id);
+    if (reconciled.status === 'running') {
+      return res.status(400).json({
+        success: false,
+        error: { message: 'App is already running' }
+      });
+    }
+
+    // Synchronous validation is only safe for apps whose files already exist:
+    // a git-bound app's directory is legitimately empty until the clone runs
+    // (the repo owns the content), so full validation moves into the job.
+    const source = await queries.getAppGitSource(app.id);
+    if (!source) {
+      const validation = await AppManager.validateAppDeployment(app.id);
+      if (!validation.valid) {
+        return res.status(400).json({
+          success: false,
+          error: { message: validation.message }
+        });
+      }
+    }
+
+    // A webhook background sync already owns the working tree claim: 409 stays
+    // synchronous (existing contract, same message).
+    if (await GitLifecycle.isSyncInProgress(app.id)) {
+      return res.status(409).json({
+        success: false,
+        error: { message: 'Update in progress' }
+      });
+    }
+
+    // Atomic cross-worker claim. Reasons map per Task 2's contract:
+    // 'gone' -> 404 (NO 202, no background task), 'updating' -> 409
+    // (platform self-update lock), 'busy' -> 409 (lost the fast-path race).
+    const claim = await DeployJobs.claim(app, DeployJobs.KINDS.START);
+    if (!claim.ok) {
+      if (claim.reason === 'gone') {
+        return res.status(404).json({
+          success: false,
+          error: { message: 'App not found' }
+        });
+      }
+      if (claim.reason === 'updating') {
+        return res.status(409).json({
+          success: false,
+          error: { message: '平台正在自更新，请稍后再试' }
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        error: { message: `部署进行中（${DeployJobs.KINDS.START}），请等待完成后再启动` }
+      });
+    }
+
+    res.status(202).json({
       success: true,
-      data: app
+      data: {
+        app_id: app.id,
+        kind: DeployJobs.KINDS.START,
+        status: 'running'
+      }
     });
+
+    // Sent, so from here the ONLY reporter is the job row. The runner owns
+    // every failure path, including failures of its own bookkeeping.
+    DeployRunner.startBackground(app, DeployJobs.KINDS.START, claim.job, (ctx) =>
+      DeployManager.deployApp(app.id, { onStep: ctx.report, logFile: ctx.logFile })
+    );
   } catch (error) {
     if (error.message === 'App not found') {
       return res.status(404).json({
@@ -215,9 +293,17 @@ router.post('/apps/:id/start', async (req, res, next) => {
         error: { message: error.message }
       });
     }
-    // Expected deployment failures (bad app input) -> 400. Covers validation
-    // messages plus NpmLifecycle errors (install/build/package.json), which are
-    // deterministic client-side failures, not server faults.
+    // assertIdle and friends stamp the status to use (409 for deploy-in-progress).
+    if (error.status === 409) {
+      return res.status(409).json({
+        success: false,
+        error: { message: error.message }
+      });
+    }
+    // Expected pre-check failures (bad app input) -> 400. The full list is
+    // kept for the synchronous checks above — validation messages and
+    // 'already running' still arrive here — but install/build/git failures
+    // can no longer: they happen inside the background job now.
     const isClientError =
       error.status === 400 ||
       error.message.includes('already running') ||

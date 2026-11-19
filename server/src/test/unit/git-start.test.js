@@ -7,6 +7,7 @@ const { queries, dbReady, adminAgent } = require('../helpers/setup');
 const { dbRun } = require('../../db');
 const AppManager = require('../../services/app-manager');
 const DeployManager = require('../../services/deploy-manager');
+const DeployJobs = require('../../services/deploy-jobs');
 const GitLifecycle = require('../../services/git-lifecycle');
 const NpmLifecycle = require('../../services/npm-lifecycle');
 const ProcessManager = require('../../services/process-manager');
@@ -376,18 +377,38 @@ test('a post-prepare start failure still releases the claim with the prepared co
   assert.equal(source.deployed_commit, 'sha1');
 });
 
-test('a clone failure maps to HTTP 400 on the start route', async () => {
-  const app = await makeApp('git-start-clone-400');
+// CONTRACT CHANGE (async deploy jobs, Task 6): POST /start used to map a clone
+// failure to a synchronous HTTP 400. The start route now returns 202 after its
+// pre-checks and the clone happens inside the background job — a failure can
+// only be discovered by doing the work, so it converges the job to `failed`
+// with the readable git stderr tail preserved in the job row's message.
+test('a clone failure is 202 + a failed deploy job, not a synchronous 400 (contract change)', async () => {
+  const app = await makeApp('git-start-clone-async');
   mockStartEnvironment();
+  // Claim env: job logs into tmp, self-update gate deterministically closed.
+  mock.method(DeployJobs, 'logDir', () => tmp);
+  mock.method(DeployJobs, 'isUpdateRunning', () => false);
   mock.method(GitLifecycle, 'prepareForStart', async () => {
     throw new Error('git fetch failed: repository not found');
   });
 
   const agent = await adminAgent();
-  const res = await agent.post(`/api/apps/${app.id}/start`).expect(400);
+  const res = await agent.post(`/api/apps/${app.id}/start`).expect(202);
+  assert.deepEqual(res.body.data, { app_id: app.id, kind: 'start', status: 'running' });
 
-  // Readable, tail-limited git stderr is surfaced to the client.
-  assert.match(res.body.error.message, /git fetch failed/);
+  // Poll the job to its terminal state (the runner finishes it after the
+  // background deployApp rejects).
+  let job = null;
+  const deadline = Date.now() + 3000;
+  while (!job || (job.status !== 'succeeded' && job.status !== 'failed')) {
+    if (Date.now() > deadline) throw new Error('deploy job did not converge');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    job = await queries.getDeployJob(app.id);
+  }
+
+  assert.equal(job.status, 'failed');
+  // Readable, tail-limited git stderr now lands in the job row.
+  assert.match(job.message, /git fetch failed/);
 
   const source = await queries.getAppGitSource(app.id);
   assert.equal(source.last_status, 'failed');
