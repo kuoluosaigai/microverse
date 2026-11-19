@@ -69,12 +69,13 @@ class DeployManager {
    * Deploy an application (start it).
    * @param {number|string} appId
    * @param {{ onStep?: ((step: string) => void) | null, logFile?: string | null }} [options]
-   *   onStep — optional synchronous progress listener called with plain
-   *   step-name strings at the boundaries the [deploy-perf] laps below
+   *   onStep — optional synchronous progress listener called with the
+   *   DEPLOY_STEP names at the boundaries the [deploy-perf] laps below
    *   measure, in real execution order git -> validate -> install -> build
-   *   -> launch -> proxy, each reported immediately BEFORE the work it names
-   *   and only when that work actually runs (gated install/build and a
-   *   skipped proxy regenerate report nothing). logFile —
+   *   -> nginx -> launch -> proxy, each reported immediately BEFORE the
+   *   work it names and only when that work actually runs (gated
+   *   install/build, the nginx step only for nginx apps, the proxy step
+   *   only when PROXY_ENABLED is on). logFile —
    *   the deploy job's transcript path, forwarded to NpmLifecycle.ensureBuilt
    *   so background npm install/build output lands on disk. Both default to
    *   null; calling deployApp(appId) with no options behaves exactly as
@@ -191,6 +192,10 @@ class DeployManager {
         report(DEPLOY_STEP.LAUNCH);
         await ProcessManager.startProcess(app, { env });
       } else if (app.deploy_type === 'nginx') {
+        // Reported before the per-app nginx work so a hanging nginx -t
+        // preflight is visible as the current step - the same
+        // anti-masquerade rule that put 'git' before validation.
+        report(DEPLOY_STEP.NGINX);
         const confPath = NginxLifecycle.generateConfig(app.path, app.name, app.port);
         const result = await NginxLifecycle.testConfig(confPath);
         if (!result.ok) {
@@ -210,19 +215,23 @@ class DeployManager {
 
       // Best-effort: refresh the edge-proxy routes so this app's subdomain is
       // reachable. Never let a proxy problem block the deploy. The proxy step
-      // is reported only when it actually does work: with PROXY_ENABLED off,
-      // regenerate() short-circuits to { skipped: true } in 0ms, and a badge
-      // for nothing is the same lie Ruling 1 bans for gated npm steps. A
-      // THROWING regenerate is not a skip — the step started, so it still
-      // counts as reported. (The skip is only known from the return value,
-      // so unlike the other steps this one is reported just after the call;
-      // a slow live reload shows the previous step until it finishes.)
-      let proxySkipped = false;
-      try {
-        const result = await ProxyManager.regenerate();
-        proxySkipped = Boolean(result && result.skipped);
-      } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
-      if (!proxySkipped) report(DEPLOY_STEP.PROXY);
+      // is reported BEFORE the call like every other step, so a hanging
+      // `nginx -s reload` is visible as 'proxy' — gated on
+      // config.deployment.proxyEnabled, the same condition regenerate()
+      // short-circuits on: with PROXY_ENABLED off it is a 0ms no-op and
+      // reporting it would be the no-work-no-step lie Ruling 1 bans for
+      // gated npm steps. This pre-read mirrors one ProxyManager internal —
+      // a deliberate cost: uniform steps + hang-visibility beat keeping the
+      // flag private. Two accepted consequences: (1) the
+      // { skipped: true, reason: 'no-base-domain' } path IS reported,
+      // because it really runs its DB queries and conf attempt - showing
+      // "edge proxy" for a misconfigured domain is not a lie, and branching
+      // on every skip reason was the rejected alternative; (2) regenerate()
+      // is documented never-throw, so a throwing regenerate (still reported,
+      // since the step began) is a contract pinned by test, not a
+      // production route.
+      if (config.deployment.proxyEnabled) report(DEPLOY_STEP.PROXY);
+      try { await ProxyManager.regenerate(); } catch (e) { console.warn(`[proxy] regenerate after start failed: ${e.message}`); }
       perf.lap('proxy regenerate');
     } catch (err) {
       perfLine(app.name, 'deployApp FAILED after', perf.total(), err.message);

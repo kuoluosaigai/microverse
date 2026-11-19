@@ -4,31 +4,35 @@
  * LEAF module: requires nothing, and never a service. That is what makes the
  * names shareable across the whole call hierarchy: deploy-jobs (top) AND
  * deploy-manager / npm-lifecycle (below it) all require DOWN into this file,
- * so the step reporting never needs an upward reference from a service to
+ * so step reporting never needs an upward reference from a service to
  * deploy-jobs and no require cycle can form. The acyclicity is pinned by a
  * test (deploy-step-reporting.test.js: loading this module in a clean process
  * must pull zero files from src/services into require.cache).
  *
- * NOTE on ordering: DEPLOY_STEPS keeps the historical list order (validate
- * before git) because DeployJobs.STEPS has exported exactly that array since
- * Task 2 and later tasks/tests reference it by name. The REPORT order of a
- * deploy is the real execution order (the git block runs before
- * validationAppDeployment) — deploy-step-reporting.test.js pins that too.
- * List order here is a name registry, not the progression a job walks.
+ * ORDER: the array order IS the report order IS the real execution order —
+ * git-prepare physically runs before validateAppDeployment, and the nginx
+ * per-app config work runs before that type's launch. deploy-jobs-state's
+ * round-trip is order-insensitive and advance() validates nothing but the
+ * name, so the sequence tests (deploy-step-reporting.test.js) are what keep
+ * the producers honest. DeployJobs.STEPS re-exports THIS exact array, so the
+ * list doubles as the progress ladder: within any reported run the indices
+ * only move forward, and Task 11's "step N of M" is index + 1.
  */
 
 const DEPLOY_STEP = {
   QUEUED: 'queued',
-  VALIDATE: 'validate',
   GIT: 'git',
+  VALIDATE: 'validate',
   INSTALL: 'install',
   BUILD: 'build',
+  NGINX: 'nginx',
   LAUNCH: 'launch',
   PROXY: 'proxy',
   DONE: 'done'
 };
 
-// Object key insertion order === the historical DeployJobs.STEPS array.
+// Object key insertion order defines the ladder above; consumers that need
+// the stable name list go through DeployJobs.STEPS (same reference).
 const DEPLOY_STEPS = Object.values(DEPLOY_STEP);
 
 const DEPLOY_KINDS = {

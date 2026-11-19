@@ -5,9 +5,11 @@ const fs = require('fs');
 const path = require('path');
 const { queries, dbReady } = require('../helpers/setup');
 const AppManager = require('../../services/app-manager');
+const config = require('../../config');
 const DeployJobs = require('../../services/deploy-jobs');
 const DeployManager = require('../../services/deploy-manager');
 const GitLifecycle = require('../../services/git-lifecycle');
+const NginxLifecycle = require('../../services/nginx-lifecycle');
 const NpmLifecycle = require('../../services/npm-lifecycle');
 const ProcessManager = require('../../services/process-manager');
 const ProxyManager = require('../../services/proxy-manager');
@@ -34,13 +36,37 @@ async function makeApp(name, deployType) {
 }
 
 // PM2 reports nothing running (reconcile keeps the DB truth), lifecycle
-// launches and the edge-proxy reload are stubbed. The regenerate stub returns
-// a NON-skipped success (the enabled-proxy shape), so the proxy step counts as
-// real work and IS reported; the skipped path is pinned separately below.
+// launches and the edge-proxy reload are stubbed. The regenerate stub only
+// keeps real nginx logic out of the test - deployApp reads the CONFIG flag
+// before calling it, so the returned shape no longer drives anything.
 function mockStartEnvironment() {
   mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
   mock.method(ProcessManager, 'startProcess', async () => ({ success: true }));
   mock.method(ProxyManager, 'regenerate', async () => ({ ok: true }));
+}
+
+// Expectations that INCLUDE the proxy step must pin PROXY_ENABLED on: the
+// report is gated on config.deployment.proxyEnabled BEFORE the call, so a
+// flipped ambient .env must never silently drop steps (or add real nginx
+// calls). Returns a restore callback for the test's finally block.
+function stubProxyEnabled(enabled = true) {
+  const previous = config.deployment.proxyEnabled;
+  config.deployment.proxyEnabled = enabled;
+  return () => { config.deployment.proxyEnabled = previous; };
+}
+
+// Task 11's progress ladder: a reported sequence must move strictly forward
+// in DeployJobs.STEPS order - index+1 is "step N of M". Guards against any
+// future step being reported out of its ladder position (the git/validate
+// masquerade this file exists to fix).
+function assertForwardLadder(steps) {
+  let last = -1;
+  for (const step of steps) {
+    const i = DeployJobs.STEPS.indexOf(step);
+    assert.ok(i >= 0, `unknown step name reported: ${steps}`);
+    assert.ok(i > last, `reported steps must advance strictly forward in the STEPS ladder: ${steps}`);
+    last = i;
+  }
 }
 
 // Stubbed install/build bodies, but the REAL fingerprint gating in
@@ -57,12 +83,15 @@ test('deployApp reports steps in order for an http-server app', async () => {
   const app = await makeApp('steps-http', 'http-server');
   mockStartEnvironment();
   const steps = [];
+  const restoreProxy = stubProxyEnabled();
   try {
     const started = await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
     assert.equal(started.status, 'running');
-    // No git binding, no npm: exactly the three steps that ran.
+    // No git binding, no npm: exactly the steps that ran, in ladder order.
     assert.deepEqual(steps, ['validate', 'launch', 'proxy']);
+    assertForwardLadder(steps);
   } finally {
+    restoreProxy();
     await queries.deleteApp(app.id);
   }
 });
@@ -80,18 +109,18 @@ test('deployApp reports git/install/build for a git-bound npm app', async () => 
   mockNpmSteps({ install: 0, build: 0 });
   mock.method(GitLifecycle, 'prepareForStart', async () => ({ commit: 'sha1', warning: null }));
   const steps = [];
+  const restoreProxy = stubProxyEnabled();
   try {
     await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
-    // Real execution order (plan revision): the git block physically runs
-    // BEFORE validation, so every step is reported immediately before its
-    // work and 'git' is the FIRST report for a git-bound app. First deploy:
-    // gates are fresh, so install/build really run and are reported.
+    // Real execution order: the git block physically runs BEFORE
+    // validationAppDeployment, so 'git' is the FIRST report for a git-bound
+    // app and every step is reported immediately before its work. First
+    // deploy: gates are fresh, so install/build really run and are reported.
     assert.deepEqual(steps, ['git', 'validate', 'install', 'build', 'launch', 'proxy']);
     assert.equal(steps[0], 'git');
-    // Names stay members of the shared step list (DeployJobs.STEPS is the
-    // re-exported DEPLOY_STEPS from utils/deploy-steps).
-    assert.ok(steps.every((s) => DeployJobs.STEPS.includes(s)), `unknown step names reported: ${steps}`);
+    assertForwardLadder(steps);
   } finally {
+    restoreProxy();
     await queries.deleteAppGitSource(app.id);
     await queries.deleteApp(app.id);
   }
@@ -127,31 +156,76 @@ test('a git-prepare failure leaves git as the last reported step', async () => {
   }
 });
 
-test('a skipped proxy regenerate reports no proxy step', async () => {
-  // Ruling 1 applied to proxy: with PROXY_ENABLED=false (the test-env
-  // default) the REAL regenerate short-circuits to { skipped: true } in 0ms —
-  // nothing ran, so nothing is reported. A THROWING regenerate is not a
-  // skip: the step was started, so it still counts as reported.
-  const app = await makeApp('steps-proxy-skip', 'http-server');
+test('nginx apps report a dedicated nginx step before launch', async () => {
+  // generateConfig/testConfig used to hide in the gap between 'validate'
+  // and 'launch' - the same masquerade the git fix killed: a hanging
+  // `nginx -t` displayed 'validate'. The NGINX step names that work and is
+  // reported before it.
+  const app = await makeApp('steps-nginx', 'nginx');
+  mockStartEnvironment();
+  const order = [];
+  mock.method(NginxLifecycle, 'generateConfig', (p, n) => { order.push('generate'); return path.join(p, `nginx.${n}.conf`); });
+  mock.method(NginxLifecycle, 'testConfig', async () => { order.push('test'); return { ok: true }; });
+  const steps = [];
+  const restoreProxy = stubProxyEnabled();
+  try {
+    const started = await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
+    assert.equal(started.status, 'running');
+    assert.deepEqual(steps, ['validate', 'nginx', 'launch', 'proxy']);
+    assertForwardLadder(steps);
+    // The step is reported before the work it names, not after:
+    assert.deepEqual(order, ['generate', 'test']);
+  } finally {
+    restoreProxy();
+    await queries.deleteApp(app.id);
+  }
+});
+
+test('the proxy step follows the proxyEnabled config, not the result', async () => {
+  // Proxy reporting is gated on config.deployment.proxyEnabled BEFORE the
+  // call, like every other step reports before its work — so a hung
+  // `nginx -s reload` shows 'proxy' instead of silently keeping the previous
+  // step. The flag is pinned explicitly in every scenario: no test may
+  // depend on the ambient PROXY_ENABLED default, which a future .env flip
+  // could turn into either missing steps or real nginx calls.
+  const app = await makeApp('steps-proxy-gate', 'http-server');
   mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
   mock.method(ProcessManager, 'startProcess', async () => ({ success: true }));
-  const steps = [];
+  const previousProxy = config.deployment.proxyEnabled;
   try {
-    await DeployManager.deployApp(app.id, { onStep: (s) => steps.push(s) });
-    assert.deepEqual(steps, ['validate', 'launch'],
-      'the disabled-proxy skip must report no proxy step');
+    // (1) Disabled: regenerate() is a 0ms skip (the real short-circuit, same
+    // config gate) - nothing runs, nothing is reported.
+    config.deployment.proxyEnabled = false;
+    const steps1 = [];
+    await DeployManager.deployApp(app.id, { onStep: (s) => steps1.push(s) });
+    assert.deepEqual(steps1, ['validate', 'launch'], 'disabled proxy reports no proxy step');
 
-    // Throw path: best-effort regenerate fails, deploy still succeeds, and
-    // the step that began is visible.
+    // (2) Enabled + throwing regenerate: reported (before the call). A
+    // skip is not a failure; deployApp treats this path as best-effort and
+    // the deploy still succeeds. regenerate() is documented never-throw, so
+    // this arm pins the contract, not a production route.
     await queries.updateAppStatus('stopped', app.id);
+    config.deployment.proxyEnabled = true;
     mock.method(ProxyManager, 'regenerate', async () => { throw new Error('nginx reload failed'); });
     mock.method(console, 'warn', () => {});
     const steps2 = [];
     const started = await DeployManager.deployApp(app.id, { onStep: (s) => steps2.push(s) });
     assert.equal(started.status, 'running');
     assert.deepEqual(steps2, ['validate', 'launch', 'proxy'],
-      'a throwing regenerate was started, so it counts as reported');
+      'a throwing regenerate was started, so it is reported');
+
+    // (3) Enabled but internally skipped for no-base-domain: reported. It
+    // really runs DB queries and attempts the conf write, so showing
+    // "edge proxy" for a misconfigured domain is not a lie - the accepted
+    // cost of one uniform config gate instead of branching on every reason.
+    await queries.updateAppStatus('stopped', app.id);
+    mock.method(ProxyManager, 'regenerate', async () => ({ ok: false, skipped: true, reason: 'no-base-domain' }));
+    const steps3 = [];
+    await DeployManager.deployApp(app.id, { onStep: (s) => steps3.push(s) });
+    assert.deepEqual(steps3, ['validate', 'launch', 'proxy'],
+      'an enabled-proxy no-base-domain skip did run work and is reported');
   } finally {
+    config.deployment.proxyEnabled = previousProxy;
     await queries.deleteApp(app.id);
   }
 });
@@ -161,7 +235,7 @@ test('deployApp without options behaves exactly as before', async () => {
   const counts = { install: 0, build: 0, start: 0 };
   mock.method(ProcessManager, 'getProcessStatus', async () => ({ exists: false, status: 'stopped' }));
   mock.method(ProcessManager, 'startProcess', async () => { counts.start += 1; return { success: true }; });
-  mock.method(ProxyManager, 'regenerate', async () => ({ ok: true, skipped: true }));
+  mock.method(ProxyManager, 'regenerate', async () => ({ ok: true }));
   mockNpmSteps(counts);
   try {
     // No second argument at all: the default path must be untouched.
@@ -208,6 +282,7 @@ test('a throwing onStep does not fail the deploy', async () => {
   mockStartEnvironment();
   mockNpmSteps(counts);
   let calls = 0;
+  const restoreProxy = stubProxyEnabled();
   try {
     const started = await DeployManager.deployApp(app.id, {
       onStep: () => { calls += 1; throw new Error('listener exploded'); }
@@ -219,6 +294,7 @@ test('a throwing onStep does not fail the deploy', async () => {
     assert.equal(counts.build, 1);
     assert.equal(calls, 5, 'validate/install/build/launch/proxy each blew up once');
   } finally {
+    restoreProxy();
     await queries.deleteApp(app.id);
   }
 });
@@ -240,10 +316,15 @@ test('utils/deploy-steps is a leaf: loading it pulls in no service', () => {
   const loaded = execFileSync(process.execPath, ['-e', probe, modulePath], { encoding: 'utf8' });
   assert.deepEqual(JSON.parse(loaded), [],
     'deploy-steps must not drag any service (deploy-jobs, deploy-manager, ...) into the require graph');
-  // And the shared list must be THE list DeployJobs re-exports, not a copy
-  // that can drift apart silently.
-  assert.deepEqual(DeployJobs.STEPS, DEPLOY_STEPS, 'DeployJobs.STEPS must be the utils constant');
-  assert.deepEqual(DeployJobs.KINDS, DEPLOY_KINDS, 'DeployJobs.KINDS must be the utils constant');
+  // Re-export IDENTITY, not content equality: a same-content hand copy
+  // could still drift, so assert the very same reference.
+  assert.equal(DeployJobs.STEPS, DEPLOY_STEPS, 'DeployJobs.STEPS must be THE utils array');
+  assert.equal(DeployJobs.KINDS, DEPLOY_KINDS, 'DeployJobs.KINDS must be THE utils object');
+  // The list order IS the execution/report ladder (Task 11 renders
+  // "step N of M" straight from index+1): git before validate, the nginx
+  // config work between build and launch.
+  assert.deepEqual(DEPLOY_STEPS,
+    ['queued', 'git', 'validate', 'install', 'build', 'nginx', 'launch', 'proxy', 'done']);
 });
 
 test('a skipped install/build reports no step for it', async () => {
@@ -258,6 +339,7 @@ test('a skipped install/build reports no step for it', async () => {
   mockNpmSteps(counts);
   const first = [];
   const second = [];
+  const restoreProxy = stubProxyEnabled();
   try {
     await DeployManager.deployApp(app.id, { onStep: (s) => first.push(s) });
     assert.deepEqual(first, ['validate', 'install', 'build', 'launch', 'proxy']);
@@ -271,6 +353,7 @@ test('a skipped install/build reports no step for it', async () => {
     assert.equal(counts.install, 1);
     assert.equal(counts.build, 1);
   } finally {
+    restoreProxy();
     await queries.deleteApp(app.id);
   }
 });
