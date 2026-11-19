@@ -617,6 +617,9 @@ test('the summary is one query, not one per app', ...)
 test('GET /apps/:id/deploy returns the bounded ANSI-stripped tail', ...)
 test('GET /apps/:id/deploy returns an empty logTail when no log exists yet', ...)  // Review Focus 4
 test('GET /apps/:id/deploy on an unknown app is 404', ...)
+test('getDeployJobsByAppIds returns one row per app and [] for an empty id list', ...)
+  // Task 1 审查遗留的 Minor：这条查询是"摘要不产生 N+1"的唯一实现，此前只有冒烟、没有提交测试。
+  // 空数组分支尤其重要 —— `IN ()` 是 SQL 语法错误，离出错只差一次重构。
 ```
 
 - [ ] **Step 2: 跑测试确认失败** — Run: `cd server && node --test src/test/integration/deploy-status-api.test.js`；Expected: FAIL（无 `deploy` 字段）
