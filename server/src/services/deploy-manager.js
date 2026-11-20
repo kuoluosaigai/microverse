@@ -136,8 +136,10 @@ class DeployManager {
         // Clone (or checkout inspection) failed — nothing safe to launch and
         // the cause is client-facing (bad URL/branch, unreachable repo), not a
         // server fault. The 400 mark is a synchronous-era leftover: since
-        // start answers 202, deployApp only ever runs inside DeployRunner, so
-        // a clone failure can no longer reach the route's error mapping — it
+        // start answers 202, the only server path to deployApp is the start
+        // route's DeployRunner workFn (plus scripts/diagnose-deploy-perf.js's
+        // direct instrumented call, outside any request), so a clone failure
+        // can no longer reach the route's error mapping — it
         // surfaces as the job's `failed` message instead. The mark is kept so
         // the route's defensive `error.status === 400` branch keeps identical
         // meaning should deployApp ever be awaited in-request again. Do NOT
@@ -186,7 +188,9 @@ class DeployManager {
 
       // Start the process. For npm: install → build → resolve env → launch with env.
       // For nginx: generate the per-app config and pre-flight it (binary present +
-      // config valid) before launch, so failures surface as clean 400s.
+      // config valid) before launch, so failures surface as a clean job failure
+      // at the nginx step instead of launching a broken process — pre-async
+      // start, the same throw answered as a request 400.
       if (app.deploy_type === 'npm') {
         // install/build run only when their fingerprint changed (or the step never
         // completed), so a plain stop→start doesn't reinstall + rebuild.

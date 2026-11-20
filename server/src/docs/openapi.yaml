@@ -510,7 +510,7 @@ paths:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  data: { $ref: '#/components/schemas/App' }
+                  data: { $ref: '#/components/schemas/AppRawRow' }
         '404':
           description: App not found
           content:
@@ -771,7 +771,7 @@ paths:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  data: { $ref: '#/components/schemas/App' }
+                  data: { $ref: '#/components/schemas/AppRawRow' }
         '400':
           description: Invalid backup / name conflict / missing file
   /apps/{id}/upload:
@@ -1021,7 +1021,31 @@ components:
         AppManager.getAllApps/getAppById — present in `GET /apps`, `GET /apps/{id}`,
         `POST /apps` (create returns the enriched row too: `deploy: null` before the first
         deploy), and the stop/restart/sync responses. Raw-row responses have NEITHER key:
-        `PUT /apps/{id}/default` and `POST /apps/restore` return the bare `apps` row.
+        `PUT /apps/{id}/default` and `POST /apps/restore` return `AppRawRow` instead.
+    AppRawRow:
+      type: object
+      properties:
+        id: { type: integer, example: 7 }
+        name: { type: string, example: "my-app" }
+        path: { type: string, example: "/data/microverse/apps/my-app" }
+        deploy_type:
+          type: string
+          enum: [npm, http-server, nginx]
+          example: "npm"
+        port: { type: integer, nullable: true, example: 3000 }
+        status:
+          type: string
+          enum: [running, stopped]
+          example: "running"
+        is_default: { type: integer, enum: [0, 1], example: 0 }
+        created_at: { type: string, example: "2026-07-12 03:25:59" }
+        updated_at: { type: string, example: "2026-07-12 03:26:23" }
+      description: |
+        Bare `apps` table row (`SELECT * FROM apps` — `queries.setDefaultApp` and
+        the restore path's `queries.getAppById`) — the actual shape behind
+        `PUT /apps/{id}/default` and `POST /apps/restore`. Unlike the enriched
+        `App` it carries no `git`/`deploy`/`metrics` keys, and it DOES carry
+        `is_default` — a column the `App` schema does not list.
     AppCreateInput:
       type: object
       required: [name, deploy_type]

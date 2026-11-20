@@ -129,12 +129,12 @@ npm run pm2:start
 #### Fronting the admin UI with nginx
 
 If your own nginx sits in front of `:<PORT>`, three defaults are too small and
-will bite large uploads or long-running deployments:
+will bite large uploads or backup restores:
 
 | Directive | nginx default | Set to | Why |
 |---|---|---|---|
 | `client_max_body_size` | `1m` | `100m` (or your `MAX_FILE_SIZE`) | uploads and backup restores above 1MB get **413** |
-| `proxy_read_timeout` | `60s` | `600s` | `POST /api/apps/:id/start` runs `npm install` + build and can exceed 60s → **504** |
+| `proxy_read_timeout` | `60s` | `600s` | large uploads and restores are still synchronous — streaming the body plus ZIP extraction can exceed 60s on slow links/disks. Deploys no longer hold a request (`POST /api/apps/:id/start` answers 202 in ~1s, the cost being the PM2 reconcile), so 600s is belt-and-braces for the file-payload paths, not a start requirement |
 | `proxy_send_timeout` | `60s` | `600s` | slow request bodies on poor uplinks |
 
 ```nginx

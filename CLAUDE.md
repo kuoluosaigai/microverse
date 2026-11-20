@@ -101,7 +101,7 @@ Three core orchestration services in `server/src/services/`, plus specialized se
    - Assigns ports automatically (serialized via `utils/serialize.js#createExclusive` to close the TOCTOU port race)
    - Reconciles DB status with PM2 truth before every lifecycle op (`reconcileStatus`): a crashed/externally-deleted process no longer wedges stop/delete; when the PM2 CLI is unreachable the DB status stands
    - `stopApp` is idempotent (already-stopped → success no-op)
-   - `deployApp(appId, { onStep, logFile })` is the deploy-job body (only ever invoked by the start route's `DeployRunner.startBackground` workFn, never inside a request): reports each `DEPLOY_STEP` immediately BEFORE the work it names and only when that work actually runs (order git → validate → install → build → nginx → launch → proxy; gated install/build, `nginx` only for nginx apps, `proxy` only when `PROXY_ENABLED`), forwards `logFile` to NpmLifecycle so background npm output lands on disk, and holds/releases the git claim exactly once across all paths
+   - `deployApp(appId, { onStep, logFile })` is the deploy-job body (the only server path to it is the start route's `DeployRunner.startBackground` workFn — plus `scripts/diagnose-deploy-perf.js`'s direct instrumented call, outside any request): reports each `DEPLOY_STEP` immediately BEFORE the work it names and only when that work actually runs (order git → validate → install → build → nginx → launch → proxy; gated install/build, `nginx` only for nginx apps, `proxy` only when `PROXY_ENABLED`), forwards `logFile` to NpmLifecycle so background npm output lands on disk, and holds/releases the git claim exactly once across all paths
 
 Specialized services:
 - **DeployJobs** - Owner of async deploy-job STATE and job LOG FILES (`app_deploy_job` table, one row per app = current or most recent job): `claim()` (update-lock gate → atomic DB claim → only then create the log file; lost claim reasons `busy`/`updating`/`gone`), `advance()`/`finish()` (pid-fenced writes — a job stolen through the stale window can't be mutated by its old owner), `isLive()` (non-terminal + owner pid alive + `started_at` within `DEPLOY_JOB_STALE_MS` — liveness, never a bare status check), `assertIdle()`/`busyMessage()` (the single producer of the `部署进行中（<kind> · <step>），请等待完成后再<action>` 409 wording), `reconcileOnBoot()` (called from server.js after DB ready: converges orphaned non-terminal rows to failed with `部署被中断（平台重启）`, so a crashed worker or a platform `pm2 reload` never wedges an app), `anyActiveJob()` (platform-wide liveness probe consulted by UpdateManager.preflight — self-update ends in `pm2 reload` and refuses while ANY deploy is live), `tail()` (bounded log read: newest 200 non-empty lines within 64KB, ANSI-stripped) and `pruneLogs()` (keeps the 5 newest `<app>-<epoch>.log` files under `data/deploy-logs/`; a log failure never fails a deploy — `log_path` retracts to null).
@@ -118,7 +118,7 @@ Specialized services:
 - **ProxyManager** - Platform-managed nginx edge reverse proxy (opt-in via `PROXY_ENABLED`): renders subdomain + root-default routes into `PROXY_CONF_FILE`, `nginx -t` then `-s reload`, rolls back on failure. Regenerated on app start/stop/delete and on boot.
 - **UpdateManager / SelfUpdater** - Platform self-update (opt-in via `SELF_UPDATE_ENABLED`; Linux + PM2 only). `UpdateManager` does the version check (`git ls-remote` + 10-min cache), preflight, atomic `data/update.lock` claim, and detached spawn; `scripts/self-update.js` does DB `VACUUM INTO` backup → ff-only pull → `npm install --include=dev` → staged client build (`dist.next` swap) → `pm2 reload` → health poll, with code/dist rollback and incomplete-update repair detection. Additive schema only; the DB is backed up but never auto-restored.
 
-**Call hierarchy**: Routes → (for start/pull: DeployJobs.claim + DeployRunner) → DeployManager → AppManager + ProcessManager (+ NpmLifecycle / NginxLifecycle / GitLifecycle) → Database/PM2; step/kind names come from the leaf `utils/deploy-steps.js` (required DOWNWARD by both layers — no import from a service back up into deploy-jobs)
+**Call hierarchy**: Routes → (for start/pull: DeployJobs.claim + DeployRunner) → DeployManager → AppManager + ProcessManager (+ NpmLifecycle / NginxLifecycle / GitLifecycle) → Database/PM2; step/kind names come from the leaf `utils/deploy-steps.js` (required DOWNWARD by both layers — no service pulls step/kind names back up from deploy-jobs; `app-manager.js` does import `DeployJobs`, but only for `isLive`)
 
 ### Cross-Platform Considerations
 
@@ -282,7 +282,7 @@ Global error handler in `server/src/middleware/error-handler.js` catches all rou
 Services throw descriptive errors; routes catch and map to appropriate HTTP status codes:
 - 400: Validation errors, business logic errors
 - 404: Resource not found
-- 409: Conflict with in-flight work — live deploy job (`DeployJobs.assertIdle`/lost claim), held git sync claim, or the platform self-update lock; deploy-conflict responses are produced ONLY by `routes/deploy-conflict.js` (`sendDeployConflict` for thrown `err.status = 409`, `sendClaimFailure` for lost `DeployJobs.claim` reasons `busy`/`updating`/`gone`)
+- 409: Conflict with in-flight work — live deploy job (`DeployJobs.assertIdle`/lost claim), held git sync claim, or the platform self-update lock; deploy-job 409 responses (thrown `err.status = 409`, lost-claim `busy`/`updating` — the same mapper answers a lost `gone` claim as 404) are produced ONLY by `routes/deploy-conflict.js` (`sendDeployConflict`/`sendClaimFailure`); the git-sync `Update in progress` 409s are mapped inline instead (`routes/apps.js:218/278/314/406`, `routes/git.js` `sendError(res, 409, ...)` sites)
 - 500: Unexpected server errors
 
 ### Key Files to Modify
@@ -319,13 +319,16 @@ curl -X POST http://localhost:5000/api/apps \
 # 3. Add HTML file
 echo "<h1>Test</h1>" > apps/test/index.html
 
-# 4. Start app
+# 4. Start app (answers 202 immediately — the deploy runs as a background job)
 curl -X POST http://localhost:5000/api/apps/1/start
 
-# 5. Verify in PM2
+# 5. Poll the job until its status is terminal (succeeded or failed)
+curl http://localhost:5000/api/apps/1/deploy
+
+# 6. Verify in PM2
 npx pm2 list
 
-# 6. Access app
+# 7. Access app
 curl http://localhost:3000  # Or assigned port
 ```
 
@@ -339,4 +342,4 @@ curl http://localhost:3000  # Or assigned port
 - Frontend proxy only works in development; production needs different setup.
 - Git-source apps reject uploads; `.git` is preserved by zip replacement, hidden from listings, and excluded from backups. Never run `git clean -x` in an app dir (it would delete `node_modules`).
 - The webhook is session-less: it is authenticated only by the per-app HMAC signature, so it must be mounted before `express.json()` with the raw body and must never trust parsed JSON before verifying.
-- A deploy is allowed to take minutes (`GIT_TIMEOUT_MS` per git call + `NPM_INSTALL_TIMEOUT_MS` + `NPM_BUILD_TIMEOUT_MS`) — but that time is spent inside the background deploy job, NOT in the HTTP request: since async start, `POST /start` returns 202 after its synchronous pre-checks and the request's only meaningful cost is the PM2 reconcile (~0.2–1s `jlist`). So "slow deploy" reports must be attributed before being fixed: read the `[deploy-perf]` lines (they land in the job log / platform log as before), or run `node scripts/diagnose-deploy-perf.js env` (read-only) / `... start <appId>` (one instrumented direct `deployApp` call — no job/claim involved, prints per-boundary ms plus why each gate fired). Every lifecycle op also pays a PM2 CLI spawn (~0.2–1.2s) — calls slower than `ProcessManager.PM2_SLOW_MS` are logged individually.
+- A deploy is allowed to take minutes (`GIT_TIMEOUT_MS` per git call + `NPM_INSTALL_TIMEOUT_MS` + `NPM_BUILD_TIMEOUT_MS`) — but that time is spent inside the background deploy job, NOT in the HTTP request: since async start, `POST /start` returns 202 after its synchronous pre-checks and the request's only meaningful cost is the PM2 reconcile (~0.2–1s `jlist`). So "slow deploy" reports must be attributed before being fixed: read the `[deploy-perf]` lines (they land in the platform log as before — `utils/lap-timer.js` only `console.log`s, and the one writer that ever appends to a job log file is npm's child output via `npm-lifecycle.js` `spawnToLogFile`), or run `node scripts/diagnose-deploy-perf.js env` (read-only) / `... start <appId>` (one instrumented direct `deployApp` call — no job/claim involved, prints per-boundary ms plus why each gate fired). Every lifecycle op also pays a PM2 CLI spawn (~0.2–1.2s) — calls slower than `ProcessManager.PM2_SLOW_MS` are logged individually.

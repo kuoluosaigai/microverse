@@ -325,7 +325,8 @@ class GitLifecycle {
   /**
    * Get the app's checkout ready for a start.
    *
-   * Clone is mandatory (a failed clone fails the start). For an existing
+   * Clone is mandatory (a failed clone fails the deploy job as `failed` —
+   * the start request itself has already answered 202). For an existing
    * checkout origin is re-pointed at the stored URL first, so a URL re-bind is
    * honored; then, when `auto_update` is on, fetch and hard-reset the worktree
    * to the remote head. A fetch failure is NOT fatal: the app starts on the
